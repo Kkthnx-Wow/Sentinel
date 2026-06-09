@@ -572,6 +572,11 @@ local function Build()
 		end
 		selectTab(default)
 	end)
+
+	-- CreateFrame returns a frame that is already shown, so the first UI.Open()'s
+	-- window:Show() would be a no-op that never fires OnShow (leaving no tab
+	-- selected). Hide it now so the first open is a real hidden->shown transition.
+	window:Hide()
 end
 
 -----------------------------------------------------------------------
@@ -602,10 +607,14 @@ function UI.Toggle()
 	end
 end
 
--- Refresh live if a new error arrives while the window is open.
--- (Unique owner table -- CallbackRegistryMixin forbids one owner registering the
--- same event twice, and other Sentinel files also subscribe to this event.)
+-- Refresh live whether a bug is caught locally or received from another player.
+-- One shared named handler (no per-registration closure -- optimization guide
+-- section 3) reused across both events. (Unique owner table: CallbackRegistryMixin
+-- forbids one owner registering the *same* event twice, but distinct events are
+-- fine, and other Sentinel files subscribe to these events with their own owners.)
 local CB_OWNER = {}
-EventRegistry:RegisterCallback("Sentinel.ErrorCaptured", function()
+local function onErrorEvent()
 	UI.Refresh()
-end, CB_OWNER)
+end
+EventRegistry:RegisterCallback("Sentinel.ErrorCaptured", onErrorEvent, CB_OWNER)
+EventRegistry:RegisterCallback("Sentinel.ErrorReceived", onErrorEvent, CB_OWNER)

@@ -98,7 +98,11 @@ local function onComm(prefix, message, _, sender)
 
 	if received > 0 then
 		ns.Print(L["You received an error report from %s."]:format(sender))
-		EventRegistry:TriggerEvent("Sentinel.ErrorCaptured")
+		-- A received bug is someone else's, not a fresh local fault. Fire a distinct
+		-- event so the displays (window + minimap badge) refresh, but the local alert
+		-- pipeline (sound, "a new error was caught" chat, auto-open) stays silent --
+		-- matching the proven BugGrabber/BugSack split between "grabbed" and "received".
+		EventRegistry:TriggerEvent("Sentinel.ErrorReceived")
 	end
 end
 

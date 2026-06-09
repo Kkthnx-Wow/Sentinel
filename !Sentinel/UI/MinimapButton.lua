@@ -176,7 +176,9 @@ f:SetScript("OnEvent", function(self)
 	registerCompartment()
 end)
 
+-- Keep the badge fresh for both locally caught and received bugs. updateCount is
+-- already a file-scope function, so reuse the reference directly -- no closure
+-- allocation (optimization guide section 3).
 local CB_OWNER = {}
-EventRegistry:RegisterCallback("Sentinel.ErrorCaptured", function()
-	updateCount()
-end, CB_OWNER)
+EventRegistry:RegisterCallback("Sentinel.ErrorCaptured", updateCount, CB_OWNER)
+EventRegistry:RegisterCallback("Sentinel.ErrorReceived", updateCount, CB_OWNER)
