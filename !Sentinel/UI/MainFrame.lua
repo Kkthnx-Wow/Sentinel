@@ -44,7 +44,7 @@ local state = {
 -- These are vertex tints multiplied over the desaturated (grey) native art, so the
 -- base values are boosted (~1.6x rest, ~2x hover) to land on the swatch on screen.
 -- The engine clamps each channel at 1.0.
-local BUTTON_REST_R, BUTTON_REST_G, BUTTON_REST_B = 0.23, 0.94, 1.0
+local BUTTON_REST_R, BUTTON_REST_G, BUTTON_REST_B = 0, 0.74, 1
 local BUTTON_HOVER_R, BUTTON_HOVER_G, BUTTON_HOVER_B = 0.29, 1.0, 1.0
 local BUTTON_ACTIVE_R, BUTTON_ACTIVE_G, BUTTON_ACTIVE_B = 0.29, 1.0, 1.0
 
@@ -64,6 +64,12 @@ local function applyButtonColors(b)
 		tintButtonTextures(b, BUTTON_ACTIVE_R, BUTTON_ACTIVE_G, BUTTON_ACTIVE_B)
 	else
 		tintButtonTextures(b, BUTTON_REST_R, BUTTON_REST_G, BUTTON_REST_B)
+	end
+	-- Selected-tab halo: the active/rest vertex tints are too close to read on
+	-- their own, so a soft additive glow behind the active tab makes the current
+	-- view obvious. Only tabs have sentinelGlow (action/close buttons skip it).
+	if b.sentinelGlow then
+		b.sentinelGlow:SetShown(b.isActive)
 	end
 end
 
@@ -225,7 +231,7 @@ local function acquireRow()
 		local hl = row:CreateTexture(nil, "HIGHLIGHT")
 		hl:SetAllPoints()
 		hl:SetAtlas("groupfinder-button-highlight")
-		hl:SetDesaturated(1)
+		hl:SetDesaturated(true)
 		hl:SetVertexColor(ns.SYNTAX.counter:GetRGB())
 		hl:SetBlendMode("ADD")
 
@@ -460,12 +466,12 @@ function applyMawBorder(frame)
 	-- Fallback: classic gold dialog border.
 	frame:SetBackdrop({
 		bgFile = "Interface\\Buttons\\WHITE8X8",
-		edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
-		edgeSize = 32,
-		insets = { left = 11, right = 11, top = 12, bottom = 11 },
+		edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+		edgeSize = 16,
+		insets = { left = 4, right = 4, top = 4, bottom = 4 },
 	})
 	frame:SetBackdropColor(unpack(ns.THEME.window))
-	frame:SetBackdropBorderColor(1, 1, 1, 1)
+	frame:SetBackdropBorderColor(unpack(ns.THEME.paneBorder))
 end
 
 -- A flat, charcoal panel with a hairline border (modern dark-mode look).
@@ -493,6 +499,21 @@ local function makeTab(parent, text, tab)
 	b.tab = tab
 	b:SetScript("OnClick", onTabClick)
 	skinButton(b)
+
+	-- Selected-tab highlight: Blizzard's auction-house nav "select" atlas is built
+	-- for rectangular nav buttons, so it hugs the tab shape. Drawn on OVERLAY with
+	-- additive blend and the theme cyan tint so it sits over the grey button art
+	-- without hiding the bevel or label.
+	local glow = b:CreateTexture(nil, "OVERLAY")
+	glow:SetAtlas("auctionhouse-nav-button-secondary-select", false)
+	glow:SetDesaturated(true)
+	glow:SetVertexColor(BUTTON_REST_R, BUTTON_REST_G, BUTTON_REST_B)
+	glow:SetBlendMode("ADD")
+	glow:SetPoint("TOPLEFT", -0, 0)
+	glow:SetPoint("BOTTOMRIGHT", 0, -0)
+	glow:Hide()
+	b.sentinelGlow = glow
+
 	tabButtons[#tabButtons + 1] = b
 	return b
 end

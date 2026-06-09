@@ -79,6 +79,17 @@ SlashCmdList.SENTINEL = function(msg)
 	elseif msg == "test" then
 		ns.Print("Generating a test error...")
 		fireTestError()
+	elseif msg == "wowbuild" or msg == "build" then
+		-- GetBuildInfo returns the client version, build number, build date, and the
+		-- numeric interface (TOC) version -- everything useful for a bug report.
+		local version, build, date, tocVersion = GetBuildInfo()
+		local label = ns.SYNTAX.varName.code
+		local value = ns.SYNTAX.message.code
+		local R = "|r"
+		ns.Print(label .. "Version" .. R .. ": " .. value .. tostring(version) .. R)
+		ns.Print(label .. "Build" .. R .. ": " .. value .. tostring(build) .. R)
+		ns.Print(label .. "Build date" .. R .. ": " .. value .. tostring(date) .. R)
+		ns.Print(label .. "Interface" .. R .. ": " .. value .. tostring(tocVersion) .. R)
 	else
 		UI.Toggle()
 	end

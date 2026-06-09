@@ -64,6 +64,15 @@ local function stripAddonPath(s)
 	return s
 end
 
+-- Lua runtime errors name the offending symbol in single quotes
+-- ("attempt to index local 'victim' (a nil value)"). Lift that identifier into the
+-- locals var colour so the culprit pops, then switch straight back to the message
+-- colour with a fresh |c (not |r) to preserve the headline's single-reset chaining.
+-- Apply this only after escapePipes, so our injected colour codes survive.
+local function highlightMessageVars(message)
+	return (message:gsub("'([%w_]+)'", C_VAR.code .. "'%1'" .. C_MSG.code))
+end
+
 local function formatHeadline(count, msg)
 	-- Most Lua errors begin "path:line: message". Parse that shape so the headline
 	-- can keep an IDE-like path/line/message hierarchy despite WoW's non-nesting
@@ -71,7 +80,7 @@ local function formatHeadline(count, msg)
 	local path, line, message = msg:match("^(.+):(%d+):%s+(.*)$")
 	local countText = paint((count or 1) .. "x", C_CNT)
 	if not path then
-		return countText .. " " .. paint(escapePipes(msg), C_MSG)
+		return countText .. " " .. paint(highlightMessageVars(escapePipes(msg)), C_MSG)
 	end
 	-- Chain path : line : message without |r between each token (see `open` above).
 	return countText
@@ -80,7 +89,7 @@ local function formatHeadline(count, msg)
 		.. open(":", C_PUNCT)
 		.. open(line, C_LINE)
 		.. open(": ", C_PUNCT)
-		.. open(escapePipes(message), C_MSG)
+		.. open(highlightMessageVars(escapePipes(message)), C_MSG)
 		.. R
 end
 

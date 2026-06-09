@@ -4,6 +4,28 @@ All notable changes to **Sentinel** are documented here. This project follows
 [Semantic Versioning](https://semver.org/) and the spirit of
 [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.2.0] - 2026-06-09
+
+### Added
+
+- Added `/sen wowbuild` (also available as `/sen build`) to print the current
+  WoW client version, build number, build date, and numeric interface/TOC
+  version for quick bug-report context.
+
+### Changed
+
+- The selected tab is now clearly highlighted. Previously the active and resting
+  tabs used nearly identical teal vertex tints, so the current view was almost
+  impossible to tell apart. Each tab now draws Blizzard's
+  `auctionhouse-nav-button-secondary-select` atlas — purpose-built for
+  rectangular nav buttons — as a cyan highlight that shows only on the active
+  tab and follows tab/search selection automatically.
+- Error-message identifiers now stand out. The offending symbol that Lua names in
+  single quotes (e.g. `attempt to index local 'victim'`) is lifted into the same
+  aqua used for local variable names, so the culprit pops against the white
+  headline while the rest of the message stays crisp. This applies only to the
+  colored detail pane; copy/export plaintext is unchanged.
+
 ## [1.1.0] - 2026-06-09
 
 ### Changed
