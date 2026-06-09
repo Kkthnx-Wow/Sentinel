@@ -24,8 +24,7 @@ L["Export"] = "Export"
 L["Send"] = "Send"
 L["Clear"] = "Clear"
 L["Reload UI"] = "Reload UI"
-L["Select an error on the left to see its full stack trace and locals here."] =
-	"Select an error on the left to see its full stack trace and locals here."
+L["Select an error on the left to see its full stack trace and locals here."] = "Select an error on the left to see its full stack trace and locals here."
 
 -- Error row tooltip
 L["Occurrences"] = "Occurrences"
@@ -36,10 +35,8 @@ L["Click to view full details."] = "Click to view full details."
 
 -- Alerts
 L["A new error was caught. Type /sentinel to view it."] = "A new error was caught. Type /sentinel to view it."
-L["Capture paused: too many errors per second. Fix or disable the failing addon."] =
-	"Capture paused: too many errors per second. Fix or disable the failing addon."
-L["[%s] AddOn '%s' tried to call the protected function '%s'."] =
-	"[%s] AddOn '%s' tried to call the protected function '%s'."
+L["Capture paused: too many errors per second. Fix or disable the failing addon."] = "Capture paused: too many errors per second. Fix or disable the failing addon."
+L["[%s] AddOn '%s' tried to call the protected function '%s'."] = "[%s] AddOn '%s' tried to call the protected function '%s'."
 L["Macro tried to call the protected function '%s'."] = "Macro tried to call the protected function '%s'."
 
 -- Sharing
@@ -47,8 +44,7 @@ L["Select the text below, then press Ctrl-C to copy."] = "Select the text below,
 L["Send the currently selected error to a player."] = "Send the currently selected error to a player."
 L["Sent error to %s."] = "Sent error to %s."
 L["You received an error report from %s."] = "You received an error report from %s."
-L["Cannot send while in an instance (Midnight blocks addon messages there). Use Export instead."] =
-	"Cannot send while in an instance (Midnight blocks addon messages there). Use Export instead."
+L["Cannot send while in an instance (Midnight blocks addon messages there). Use Export instead."] = "Cannot send while in an instance (Midnight blocks addon messages there). Use Export instead."
 L["Enter a valid player name."] = "Enter a valid player name."
 L["Nothing selected to send."] = "Nothing selected to send."
 
@@ -56,17 +52,13 @@ L["Nothing selected to send."] = "Nothing selected to send."
 L["Show minimap button"] = "Show minimap button"
 L["Toggle the Sentinel button next to the minimap."] = "Toggle the Sentinel button next to the minimap."
 L["Play a sound on new errors"] = "Play a sound on new errors"
-L["Plays a short sound (throttled) whenever a new, unique error is caught."] =
-	"Plays a short sound (throttled) whenever a new, unique error is caught."
+L["Plays a short sound (throttled) whenever a new, unique error is caught."] = "Plays a short sound (throttled) whenever a new, unique error is caught."
 L["Announce new errors in chat"] = "Announce new errors in chat"
-L["Prints a short notice to chat when a new error is caught."] =
-	"Prints a short notice to chat when a new error is caught."
+L["Prints a short notice to chat when a new error is caught."] = "Prints a short notice to chat when a new error is caught."
 L["Auto-open on error"] = "Auto-open on error"
-L["Automatically open the window when a new error is caught (never during combat)."] =
-	"Automatically open the window when a new error is caught (never during combat)."
+L["Automatically open the window when a new error is caught (never during combat)."] = "Automatically open the window when a new error is caught (never during combat)."
 L["Wipe all stored errors"] = "Wipe all stored errors"
-L["Permanently delete every stored error from every session."] =
-	"Permanently delete every stored error from every session."
+L["Permanently delete every stored error from every session."] = "Permanently delete every stored error from every session."
 L["All stored errors have been wiped."] = "All stored errors have been wiped."
 
 -- Minimap tooltip

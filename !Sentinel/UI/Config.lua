@@ -10,15 +10,7 @@ local L = ns.L
 local category
 
 local function addCheckbox(varKey, name, tooltip, onChange)
-	local setting = Settings.RegisterAddOnSetting(
-		category,
-		"SENTINEL_" .. varKey:upper(),
-		varKey,
-		DB.config,
-		Settings.VarType.Boolean,
-		name,
-		ns.DEFAULTS[varKey]
-	)
+	local setting = Settings.RegisterAddOnSetting(category, "SENTINEL_" .. varKey:upper(), varKey, DB.config, Settings.VarType.Boolean, name, ns.DEFAULTS[varKey])
 	Settings.CreateCheckbox(category, setting, tooltip)
 	if onChange then
 		setting:SetValueChangedCallback(function(_, value)
@@ -40,38 +32,20 @@ function Config.Initialize()
 			ns.UI.SetMinimapShown(value)
 		end
 	end)
-	addCheckbox(
-		"sound",
-		L["Play a sound on new errors"],
-		L["Plays a short sound (throttled) whenever a new, unique error is caught."]
-	)
-	addCheckbox(
-		"chat",
-		L["Announce new errors in chat"],
-		L["Prints a short notice to chat when a new error is caught."]
-	)
-	addCheckbox(
-		"autoOpen",
-		L["Auto-open on error"],
-		L["Automatically open the window when a new error is caught (never during combat)."]
-	)
+	addCheckbox("sound", L["Play a sound on new errors"], L["Plays a short sound (throttled) whenever a new, unique error is caught."])
+	addCheckbox("chat", L["Announce new errors in chat"], L["Prints a short notice to chat when a new error is caught."])
+	addCheckbox("autoOpen", L["Auto-open on error"], L["Automatically open the window when a new error is caught (never during combat)."])
 
 	-- Wipe button
 	if CreateSettingsButtonInitializer then
-		local initializer = CreateSettingsButtonInitializer(
-			L["Wipe all stored errors"],
-			L["Wipe all stored errors"],
-			function()
-				DB.Reset()
-				if ns.UI.UpdateMinimapCount then
-					ns.UI.UpdateMinimapCount()
-				end
-				ns.UI.Refresh()
-				ns.Print(L["All stored errors have been wiped."])
-			end,
-			L["Permanently delete every stored error from every session."],
-			true
-		)
+		local initializer = CreateSettingsButtonInitializer(L["Wipe all stored errors"], L["Wipe all stored errors"], function()
+			DB.Reset()
+			if ns.UI.UpdateMinimapCount then
+				ns.UI.UpdateMinimapCount()
+			end
+			ns.UI.Refresh()
+			ns.Print(L["All stored errors have been wiped."])
+		end, L["Permanently delete every stored error from every session."], true)
 		local layout = SettingsPanel:GetLayout(category)
 		if layout then
 			layout:AddInitializer(initializer)

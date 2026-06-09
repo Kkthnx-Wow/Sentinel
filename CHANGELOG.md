@@ -6,6 +6,21 @@ All notable changes to **Sentinel** are documented here. This project follows
 
 ## [1.1.0] - 2026-06-09
 
+### Changed
+
+- Reworked the detail-pane syntax highlighting around a centralized cyan/silver
+  palette (`ns.SYNTAX`). The headline now tokenizes `path:line: message` so the
+  file path is soft cyan, the line number is bright cyan, punctuation is slate
+  gray, and the actual error message stays crisp white. Stack and locals
+  highlighting still use lightweight `gsub` passes, with light-silver base text,
+  electric-blue counts/numbers, aqua local names, silver strings, soft-red `nil`,
+  and amber booleans. Color prefixes are cached once at load so formatting does
+  not regenerate WoW color codes.
+- Refined the visual theme to use Sentinel's cyan/teal brand consistently across
+  the window title, addon-list title, counters, minimap tooltip header, tabs,
+  action buttons, and close buttons. Buttons now keep Blizzard's native bevel art
+  while using desaturated teal-tinted states and white labels.
+
 ### Fixed
 
 - The window now selects its default tab the very first time it is opened.

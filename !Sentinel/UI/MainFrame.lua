@@ -15,8 +15,12 @@ local Comm = ns.Comm
 
 local ROW_HEIGHT = 18
 
+-- Precompute the row label format once (constant colour code + format spec) so the
+-- per-row path in RefreshRows never rebuilds it (optimization guide section 3).
+local ROW_FORMAT = ns.SYNTAX.counter.code .. "%dx|r %s"
+
 -- Window-scoped widgets (filled in by Build()).
-local window, listScroll, listChild, detailScroll, detailEdit, countText, searchBox, listEmpty
+local window, listScroll, listChild, detailScroll, detailChild, detailText, countText, searchBox, listEmpty
 local rowPool
 local tabButtons = {}
 
@@ -31,6 +35,91 @@ local state = {
 	selected = nil,
 	searchText = "",
 }
+
+-- Button skin (tabs, action buttons, close). Keep Blizzard's native button
+-- textures, then desaturate/tint them the same way the close button looked good:
+-- grey button art, white text, original bevel/border.
+-----------------------------------------------------------------------
+-- Target button colour: #2596be = rgb(37,150,190) -> 0.145 / 0.588 / 0.745.
+-- These are vertex tints multiplied over the desaturated (grey) native art, so the
+-- base values are boosted (~1.6x rest, ~2x hover) to land on the swatch on screen.
+-- The engine clamps each channel at 1.0.
+local BUTTON_REST_R, BUTTON_REST_G, BUTTON_REST_B = 0.23, 0.94, 1.0
+local BUTTON_HOVER_R, BUTTON_HOVER_G, BUTTON_HOVER_B = 0.29, 1.0, 1.0
+local BUTTON_ACTIVE_R, BUTTON_ACTIVE_G, BUTTON_ACTIVE_B = 0.29, 1.0, 1.0
+
+local function tintButtonTextures(b, r, g, bl)
+	local textures = b.sentinelButtonTextures
+	if not textures then
+		return
+	end
+	for i = 1, #textures do
+		textures[i]:SetDesaturated(true)
+		textures[i]:SetVertexColor(r, g, bl)
+	end
+end
+
+local function applyButtonColors(b)
+	if b.isActive then
+		tintButtonTextures(b, BUTTON_ACTIVE_R, BUTTON_ACTIVE_G, BUTTON_ACTIVE_B)
+	else
+		tintButtonTextures(b, BUTTON_REST_R, BUTTON_REST_G, BUTTON_REST_B)
+	end
+end
+
+local function onButtonEnter(b)
+	tintButtonTextures(b, BUTTON_HOVER_R, BUTTON_HOVER_G, BUTTON_HOVER_B)
+end
+
+local function onButtonLeave(b)
+	applyButtonColors(b)
+end
+
+local function collectButtonTextures(b)
+	local textures = {}
+	local n = 0
+	local function add(texture)
+		if texture and texture.SetDesaturated then
+			n = n + 1
+			textures[n] = texture
+		end
+	end
+
+	add(b.GetNormalTexture and b:GetNormalTexture())
+	add(b.GetPushedTexture and b:GetPushedTexture())
+	add(b.GetHighlightTexture and b:GetHighlightTexture())
+	add(b.GetDisabledTexture and b:GetDisabledTexture())
+	add(b.Left)
+	add(b.Middle)
+	add(b.Right)
+
+	local regions = { b:GetRegions() }
+	for i = 1, #regions do
+		if regions[i] and regions[i].GetObjectType and regions[i]:GetObjectType() == "Texture" then
+			add(regions[i])
+		end
+	end
+
+	b.sentinelButtonTextures = textures
+end
+
+local function skinButton(b)
+	collectButtonTextures(b)
+	local fs = b:GetFontString()
+	if fs then
+		fs:SetTextColor(1, 1, 1)
+	end
+	b:HookScript("OnEnter", onButtonEnter)
+	b:HookScript("OnLeave", onButtonLeave)
+	applyButtonColors(b)
+end
+
+local function skinCloseButton(b)
+	collectButtonTextures(b)
+	b:HookScript("OnEnter", onButtonEnter)
+	b:HookScript("OnLeave", onButtonLeave)
+	applyButtonColors(b)
+end
 
 -----------------------------------------------------------------------
 -- Data: build the list for the active tab
@@ -65,17 +154,20 @@ end
 -- Detail pane
 -----------------------------------------------------------------------
 local function updateDetail()
-	if not detailEdit then
+	if not detailText then
 		return
 	end
 	local err = state.selected
+	local text
 	if err then
-		detailEdit.shown = Format.FormatError(err)
+		text = Format.FormatError(err)
 	else
-		detailEdit.shown = "|cff808080" .. L["Select an error on the left to see its full stack trace and locals here."] .. "|r"
+		text = "|cff808080" .. L["Select an error on the left to see its full stack trace and locals here."] .. "|r"
 	end
-	detailEdit:SetText(detailEdit.shown)
-	detailEdit:SetCursorPosition(0)
+	detailText:SetText(text)
+	-- Resize the scroll child so the scrollbar reflects the full formatted body.
+	local height = detailText:GetStringHeight()
+	detailChild:SetSize(458, math.max(height + 4, 1))
 	if detailScroll then
 		-- Snap back to the top when switching errors. With ScrollFrameTemplate the
 		-- thin scrollbar drives the position, so nudge its value too (guarded, since
@@ -106,7 +198,7 @@ local function onRowEnter(row)
 		return
 	end
 	GameTooltip:SetOwner(row, "ANCHOR_RIGHT")
-	GameTooltip:AddLine(ns.DISPLAY_NAME, 0.2, 1, 0.6)
+	GameTooltip:AddLine(ns.DISPLAY_NAME, 0, 0.749, 1)
 	GameTooltip:AddLine(Format.ShortMessage(err), 1, 1, 1, true)
 	GameTooltip:AddLine(" ")
 	GameTooltip:AddDoubleLine(L["Occurrences"], tostring(err.counter or 1), 0.8, 0.8, 0.8, 1, 1, 1)
@@ -133,11 +225,14 @@ local function acquireRow()
 		local hl = row:CreateTexture(nil, "HIGHLIGHT")
 		hl:SetAllPoints()
 		hl:SetAtlas("groupfinder-button-highlight")
+		hl:SetDesaturated(1)
+		hl:SetVertexColor(ns.SYNTAX.counter:GetRGB())
 		hl:SetBlendMode("ADD")
 
 		row.sel = row:CreateTexture(nil, "BACKGROUND")
 		row.sel:SetAllPoints()
 		row.sel:SetAtlas("groupfinder-highlightbar-green")
+		row.sel:SetDesaturation(1)
 		row.sel:SetBlendMode("ADD")
 		row.sel:Hide()
 
@@ -172,7 +267,7 @@ function UI.RefreshRows()
 		if err.source then
 			label = "|cffff8800*|r " .. label
 		end
-		row.text:SetText(("|cffff4411%dx|r %s"):format(count, label))
+		row.text:SetText(ROW_FORMAT:format(count, label))
 		row.sel:SetShown(err == state.selected)
 		row:SetPoint("TOPLEFT", listChild, "TOPLEFT", 0, -(i - 1) * ROW_HEIGHT)
 		row:SetPoint("TOPRIGHT", listChild, "TOPRIGHT", 0, -(i - 1) * ROW_HEIGHT)
@@ -180,7 +275,7 @@ function UI.RefreshRows()
 	end
 
 	listChild:SetHeight(math.max(n * ROW_HEIGHT, 1))
-	countText:SetText(("|cff33ff99%d|r"):format(n))
+	countText:SetText((ns.SYNTAX.counter.code .. "%d|r"):format(n))
 	if listEmpty then
 		listEmpty:SetShown(n == 0)
 	end
@@ -221,11 +316,8 @@ local function selectTab(tab)
 		searchBox:SetText("")
 	end
 	for _, b in pairs(tabButtons) do
-		if b.tab == tab then
-			b:LockHighlight()
-		else
-			b:UnlockHighlight()
-		end
+		b.isActive = (b.tab == tab)
+		applyButtonColors(b)
 	end
 	UI.Refresh()
 end
@@ -260,6 +352,7 @@ local function showExport(text)
 
 		local close = CreateFrame("Button", nil, exportFrame, "UIPanelCloseButton")
 		close:SetPoint("TOPRIGHT", -15, -15)
+		skinCloseButton(close)
 
 		-- Recessed charcoal pane around the text box, like the main frame's panes.
 		local pane = makePane(exportFrame)
@@ -324,6 +417,7 @@ local function makeActionButton(parent, text, width, onClick)
 	b:SetSize(width, 22)
 	b:SetText(text)
 	b:SetScript("OnClick", onClick)
+	skinButton(b)
 
 	return b
 end
@@ -388,14 +482,17 @@ function makePane(parent)
 	return p
 end
 
+local function onTabClick(b)
+	selectTab(b.tab)
+end
+
 local function makeTab(parent, text, tab)
 	local b = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
 	b:SetSize(120, 22)
 	b:SetText(text)
 	b.tab = tab
-	b:SetScript("OnClick", function()
-		selectTab(tab)
-	end)
+	b:SetScript("OnClick", onTabClick)
+	skinButton(b)
 	tabButtons[#tabButtons + 1] = b
 	return b
 end
@@ -431,6 +528,7 @@ local function Build()
 
 	local close = CreateFrame("Button", nil, window, "UIPanelCloseButton")
 	close:SetPoint("TOPRIGHT", -15, -15)
+	skinCloseButton(close)
 
 	-- Tabs
 	local tabAll = makeTab(window, L["All bugs"], "all")
@@ -455,7 +553,8 @@ local function Build()
 			state.tab = "search"
 			state.selected = nil
 			for _, b in pairs(tabButtons) do
-				b:UnlockHighlight()
+				b.isActive = false
+				applyButtonColors(b)
 			end
 			UI.Refresh()
 		elseif state.tab == "search" then
@@ -501,20 +600,21 @@ local function Build()
 	detailScroll:SetPoint("TOPLEFT", 6, -12)
 	detailScroll:SetPoint("BOTTOMRIGHT", -26, 6)
 
-	detailEdit = CreateFrame("EditBox", nil, detailScroll)
-	detailEdit:SetMultiLine(true)
-	detailEdit:SetFontObject("ChatFontNormal")
-	detailEdit:SetWidth(458)
-	detailEdit:SetAutoFocus(false)
-	detailEdit:SetTextColor(0.85, 0.85, 0.85)
-	detailEdit:SetScript("OnEscapePressed", detailEdit.ClearFocus)
-	-- Treat as read-only: snap back to the rendered text if anything edits it.
-	detailEdit:SetScript("OnTextChanged", function(self, userInput)
-		if userInput and self.shown and self:GetText() ~= self.shown then
-			self:SetText(self.shown)
-		end
-	end)
-	detailScroll:SetScrollChild(detailEdit)
+	-- FontString (not EditBox): read-only detail text with reliable per-token |c
+	-- coloring. EditBox mishandles multiple inline color codes on a single line,
+	-- which left locals looking monochromatic even when Format.lua painted each
+	-- token. Copy/Export still use PlainError, so nothing is lost.
+	detailChild = CreateFrame("Frame", nil, detailScroll)
+	detailChild:SetSize(458, 1)
+	detailText = detailChild:CreateFontString(nil, "ARTWORK", "ChatFontNormal")
+	detailText:SetPoint("TOPLEFT")
+	detailText:SetWidth(458)
+	detailText:SetJustifyH("LEFT")
+	detailText:SetJustifyV("TOP")
+	detailText:SetWordWrap(true)
+	detailText:SetNonSpaceWrap(false)
+	detailText:SetTextColor(ns.SYNTAX.stackText:GetRGB())
+	detailScroll:SetScrollChild(detailChild)
 
 	-- Bottom action buttons
 	local copyBtn = makeActionButton(window, L["Copy"], 90, function()

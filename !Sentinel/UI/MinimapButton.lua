@@ -53,7 +53,7 @@ ns.UI.UpdateMinimapCount = updateCount
 -----------------------------------------------------------------------
 local function onTooltip(self)
 	GameTooltip:SetOwner(self, "ANCHOR_LEFT")
-	GameTooltip:AddLine(ns.DISPLAY_NAME)
+	GameTooltip:AddLine(ns.DISPLAY_NAME, ns.SYNTAX.counter:GetRGB())
 	local errs = DB.GetBySession(DB.GetSessionId())
 	local n = #errs
 	if n == 0 then
@@ -65,10 +65,10 @@ local function onTooltip(self)
 		end
 	end
 	GameTooltip:AddLine(" ")
-	GameTooltip:AddLine(L["Left-click: open the error window"], 0.2, 1, 0.2)
-	GameTooltip:AddLine(L["Right-click: open settings"], 0.2, 1, 0.2)
-	GameTooltip:AddLine(L["Shift-click: reload the UI"], 0.2, 1, 0.2)
-	GameTooltip:AddLine(L["Alt-click: wipe all errors"], 0.2, 1, 0.2)
+	GameTooltip:AddLine(L["Left-click: open the error window"], ns.SYNTAX.path:GetRGB())
+	GameTooltip:AddLine(L["Right-click: open settings"], ns.SYNTAX.path:GetRGB())
+	GameTooltip:AddLine(L["Shift-click: reload the UI"], ns.SYNTAX.path:GetRGB())
+	GameTooltip:AddLine(L["Alt-click: wipe all errors"], ns.SYNTAX.path:GetRGB())
 	GameTooltip:Show()
 end
 
