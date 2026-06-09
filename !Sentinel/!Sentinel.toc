@@ -1,0 +1,38 @@
+## Interface: 120005, 120007
+## Title: |cff33ff99Sentinel|r
+## Notes: A modern, Secret-Value-safe Lua error watcher. Catches, dedupes, persists, and lets you share UI bugs. |n|n|cff5C8BCFDeveloper|cffffffff:|r |nJosh "|CFF7b8489Kkthnx|r" Russell|n|n|cff009cdePayPal|r|cffffffff:|r |n|cffffffffwww.paypal.me/KkthnxTV|r|n|n|cfff96854Patreon|r|cffffffff:|r |n|cffffffffwww.patreon.com/Kkthnx|r
+## Author: Josh "|CFF7b8489Kkthnx|r" Russell
+## Version: 1.0.0
+## SavedVariables: SentinelDB
+## SavedVariablesPerCharacter: SentinelCharDB
+## LoadSavedVariablesFirst: 1
+## IconTexture: Interface\COMMON\Indicator-Green
+
+## Category-enUS: Development Tools
+## Category-deDE: Entwicklungstools
+## Category-esES: Herramientas de Desarrollo
+## Category-frFR: Outils de Développement
+## Category-ruRU: Инструменты разработки
+## Category-zhCN: 开发工具
+## Category-zhTW: 開發工具
+
+# --- Core (load order matters: capture must hook the error handler as early as possible) ---
+Core\Namespace.lua
+Core\Locales.lua
+Core\Database.lua
+Core\Capture.lua
+
+# --- Embedded libraries (only needed by the share/comm feature, loaded after capture) ---
+Libs\embeds.xml
+
+# --- Formatting + sharing ---
+Core\Format.lua
+Core\Comm.lua
+
+# --- User interface ---
+UI\MainFrame.lua
+UI\MinimapButton.lua
+UI\Config.lua
+
+# --- Orchestration / slash commands (loads last) ---
+Core\Core.lua
