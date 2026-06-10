@@ -26,6 +26,18 @@ L["Clear"] = "Clear"
 L["Reload UI"] = "Reload UI"
 L["Select an error on the left to see its full stack trace and locals here."] = "Select an error on the left to see its full stack trace and locals here."
 
+-- Tab tooltips
+L["Every error stored across every session, including reports received from other players."] = "Every error stored across every session, including reports received from other players."
+L["Errors caught since your last login or UI reload."] = "Errors caught since your last login or UI reload."
+L["Errors caught during your previous play session."] = "Errors caught during your previous play session."
+L["Error reports other players have sent to you with Sentinel."] = "Error reports other players have sent to you with Sentinel."
+
+-- Action button tooltips
+L["Copies the one error selected on the left. Opens a text box \226\128\148 select all and press Ctrl-C."] = "Copies the one error selected on the left. Opens a text box \226\128\148 select all and press Ctrl-C."
+L["Exports every error in the current tab at once. Opens a text box \226\128\148 select all and press Ctrl-C."] = "Exports every error in the current tab at once. Opens a text box \226\128\148 select all and press Ctrl-C."
+L["Send the selected error to another Sentinel user. Unavailable inside instances."] = "Send the selected error to another Sentinel user. Unavailable inside instances."
+L["Reload your interface \226\128\148 handy after disabling a broken addon."] = "Reload your interface \226\128\148 handy after disabling a broken addon."
+
 -- Error row tooltip
 L["Occurrences"] = "Occurrences"
 L["Last seen"] = "Last seen"

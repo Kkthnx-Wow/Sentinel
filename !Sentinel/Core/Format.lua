@@ -56,6 +56,20 @@ local function escapePipes(s)
 	return (s:gsub("|([^chHr])", "||%1"):gsub("|$", "||"))
 end
 
+-- Copy/Export must be genuinely plain text. Captured data (e.g. frame or POI field
+-- dumps) often embeds real WoW colour escapes; left in, they render as colour in the
+-- export box AND paste into Discord/pastebin as raw garbage. Strip the colour codes
+-- while keeping the visible text. WoW has two colour-open forms:
+--   * classic hex:  |cAARRGGBB ... |r
+--   * named (10.x+): |cnCOLOR_NAME: ... |r   (used heavily by Blizzard POI/map data)
+-- plus the |r reset. Underscores in the named form mean we match [%w_], not just %x.
+local function stripColorCodes(s)
+	s = s:gsub("|c%x%x%x%x%x%x%x%x", "")
+	s = s:gsub("|c[nN][%w_]+:", "")
+	s = s:gsub("|r", "")
+	return s
+end
+
 -- Drop the "Interface/AddOns/" boilerplate that every addon path carries -- the
 -- user already knows it's an addon, and it just eats horizontal space.
 local function stripAddonPath(s)
@@ -83,14 +97,7 @@ local function formatHeadline(count, msg)
 		return countText .. " " .. paint(highlightMessageVars(escapePipes(msg)), C_MSG)
 	end
 	-- Chain path : line : message without |r between each token (see `open` above).
-	return countText
-		.. " "
-		.. open(escapePipes(stripAddonPath(path)), C_PATH)
-		.. open(":", C_PUNCT)
-		.. open(line, C_LINE)
-		.. open(": ", C_PUNCT)
-		.. open(highlightMessageVars(escapePipes(message)), C_MSG)
-		.. R
+	return countText .. " " .. open(escapePipes(stripAddonPath(path)), C_PATH) .. open(":", C_PUNCT) .. open(line, C_LINE) .. open(": ", C_PUNCT) .. open(highlightMessageVars(escapePipes(message)), C_MSG) .. R
 end
 
 local function colorStack(ret)
@@ -218,14 +225,14 @@ function Format.PlainError(err)
 		return "<secret error>"
 	end
 
-	msg = EscapeDecimalNonPrintables(msg)
+	msg = stripColorCodes(EscapeDecimalNonPrintables(msg))
 	local parts = { ("%dx %s"):format(err.counter or 1, msg) }
 
 	if err.stack and not issecretvalue(err.stack) and err.stack ~= "" then
-		parts[#parts + 1] = EscapeDecimalNonPrintables(err.stack)
+		parts[#parts + 1] = stripColorCodes(EscapeDecimalNonPrintables(err.stack))
 	end
 	if err.locals and not issecretvalue(err.locals) and err.locals ~= "" then
-		parts[#parts + 1] = "Locals:\n" .. normalizeLocals(EscapeDecimalNonPrintables(err.locals))
+		parts[#parts + 1] = "Locals:\n" .. stripColorCodes(normalizeLocals(EscapeDecimalNonPrintables(err.locals)))
 	end
 
 	return table.concat(parts, "\n")

@@ -23,7 +23,8 @@ It's designed for the **Midnight** era from day one: every value that touches th
 - **Never spams your frame rate** — a token-bucket throttle pauses capture during an error storm so addon CPU never competes with rendering.
 - **Remembers across sessions** — errors persist in SavedVariables, grouped by play session, with a hard cap so the file never balloons.
 - **Share bugs peer-to-peer** — send a caught error to another Sentinel user and triage it together.
-- **Native & modern** — Blizzard Settings panel, Addon Compartment entry, modern scrollbars, and an ornate Maw/runecarving frame skin over a flat dark theme.
+- **Reach it your way** — a minimap button, an Addon Compartment entry, **and** a LibDataBroker data source for broker bars (Titan Panel, ChocolateBar, Bazooka, …) — so you can keep your minimap clean.
+- **Native & modern** — Blizzard Settings panel, hover help on every tab and button, modern scrollbars, and an ornate Maw/runecarving frame skin over a flat dark theme.
 
 ---
 
@@ -60,7 +61,11 @@ The leading `!` keeps Sentinel near the top of the load order so it can hook the
 | **Alt-click** | Wipe all stored errors |
 | **Drag** | Reposition around the minimap ring |
 
-Sentinel also registers an **Addon Compartment** entry, so it's reachable even with the minimap button hidden.
+### Broker / data source
+
+Sentinel publishes a **LibDataBroker-1.1** "data source" object, so any broker display addon — **Titan Panel**, **ChocolateBar**, **Bazooka**, and friends — can show the live error count, the full hover tooltip, and the same left/right/shift/alt click actions on a panel of your choosing. The data source stays in sync even when the minimap button is hidden, which is ideal when your minimap is already crowded.
+
+Sentinel also registers an **Addon Compartment** entry, so it's reachable even with the minimap button hidden. Hide the minimap button in settings and use the broker source or compartment entry instead — whichever fits your UI.
 
 ---
 
@@ -77,8 +82,8 @@ Sentinel also registers an **Addon Compartment** entry, so it's reachable even w
 - **Tabbed views** — **All bugs**, **This session**, **Previous session**, **Received**, plus live **Search**.
 - **Smart default** — opens to *This session*, or falls back to *All bugs* when the session is clean but older bugs exist, so you never land on an empty list.
 - **Syntax-highlighted detail** — colourised stack traces and locals in a readable, scrollable pane.
-- **Hover tooltips** — every row shows occurrences, last-seen date/time, session, and (for shared bugs) who sent it.
-- **Copy & Export** — copy a single error or export the whole list as clean plaintext, ready to paste into a ticket or Discord.
+- **Hover tooltips everywhere** — every row shows occurrences, last-seen date/time, session, and (for shared bugs) who sent it; every tab and action button also explains itself on hover, so the difference between **Copy** (just the selected error) and **Export** (every error in the current tab) is always clear.
+- **Copy & Export** — copy a single error or export the whole list as genuinely clean plaintext (WoW colour codes are stripped), ready to paste into a ticket or Discord.
 
 ### Sharing
 - **Send to a player** — share the selected error with another Sentinel user via a chunked, throttled addon channel (AceComm-3.0 + AceSerializer-3.0).
@@ -121,6 +126,7 @@ Sentinel is a ground-up rewrite, but it stands on the shoulders of the addons th
 - **Funkydude & contributors** (**BugSack**) — inspiration for friendly error display and peer sharing.
 - **Baudtack** (**!BaudErrorFrame**) — the original lightweight error-frame concept this project grew out of.
 - **The Ace3 team** — AceComm-3.0, AceSerializer-3.0, CallbackHandler-1.0 and LibStub, embedded for sharing.
+- **Tekkub & contributors** (**LibDataBroker-1.1**) — the broker data-source standard, embedded so Sentinel can live on your panel of choice.
 
 Sentinel reuses none of their code verbatim — it's a new implementation with its own architecture, UI, persistence, sharing, and Midnight Secret-Value compatibility layer.
 

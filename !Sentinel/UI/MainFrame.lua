@@ -127,6 +127,22 @@ local function skinCloseButton(b)
 	applyButtonColors(b)
 end
 
+-- Hover help for tabs and action buttons. The title reuses the button's own label
+-- (brand cyan, matching the row tooltip header) and the body explains what it does,
+-- so Copy vs Export and the four tabs are no longer guesswork. HookScript appends to
+-- the colour hooks set in skinButton, so both still fire.
+local function setButtonTooltip(b, title, body)
+	b:HookScript("OnEnter", function(self)
+		GameTooltip:SetOwner(self, "ANCHOR_TOP")
+		GameTooltip:AddLine(title, 0, 0.749, 1)
+		if body then
+			GameTooltip:AddLine(body, 1, 1, 1, true)
+		end
+		GameTooltip:Show()
+	end)
+	b:HookScript("OnLeave", GameTooltip_Hide)
+end
+
 -----------------------------------------------------------------------
 -- Data: build the list for the active tab
 -----------------------------------------------------------------------
@@ -418,12 +434,15 @@ StaticPopupDialogs["SENTINEL_SEND"] = {
 -----------------------------------------------------------------------
 -- Build the window
 -----------------------------------------------------------------------
-local function makeActionButton(parent, text, width, onClick)
+local function makeActionButton(parent, text, width, onClick, tooltip)
 	local b = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
 	b:SetSize(width, 22)
 	b:SetText(text)
 	b:SetScript("OnClick", onClick)
 	skinButton(b)
+	if tooltip then
+		setButtonTooltip(b, text, tooltip)
+	end
 
 	return b
 end
@@ -492,13 +511,16 @@ local function onTabClick(b)
 	selectTab(b.tab)
 end
 
-local function makeTab(parent, text, tab)
+local function makeTab(parent, text, tab, tooltip)
 	local b = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
 	b:SetSize(120, 22)
 	b:SetText(text)
 	b.tab = tab
 	b:SetScript("OnClick", onTabClick)
 	skinButton(b)
+	if tooltip then
+		setButtonTooltip(b, text, tooltip)
+	end
 
 	-- Selected-tab highlight: Blizzard's auction-house nav "select" atlas is built
 	-- for rectangular nav buttons, so it hugs the tab shape. Drawn on OVERLAY with
@@ -552,13 +574,13 @@ local function Build()
 	skinCloseButton(close)
 
 	-- Tabs
-	local tabAll = makeTab(window, L["All bugs"], "all")
+	local tabAll = makeTab(window, L["All bugs"], "all", L["Every error stored across every session, including reports received from other players."])
 	tabAll:SetPoint("TOPLEFT", 14, -42)
-	local tabSession = makeTab(window, L["This session"], "session")
+	local tabSession = makeTab(window, L["This session"], "session", L["Errors caught since your last login or UI reload."])
 	tabSession:SetPoint("LEFT", tabAll, "RIGHT", 4, 0)
-	local tabPrev = makeTab(window, L["Previous session"], "previous")
+	local tabPrev = makeTab(window, L["Previous session"], "previous", L["Errors caught during your previous play session."])
 	tabPrev:SetPoint("LEFT", tabSession, "RIGHT", 4, 0)
-	local tabRecv = makeTab(window, L["Received"], "received")
+	local tabRecv = makeTab(window, L["Received"], "received", L["Error reports other players have sent to you with Sentinel."])
 	tabRecv:SetPoint("LEFT", tabPrev, "RIGHT", 4, 0)
 
 	-- Search box
@@ -642,7 +664,7 @@ local function Build()
 		if state.selected then
 			showExport(Format.PlainError(state.selected))
 		end
-	end)
+	end, L["Copies the one error selected on the left. Opens a text box \226\128\148 select all and press Ctrl-C."])
 	copyBtn:SetPoint("BOTTOMLEFT", 16, 14)
 
 	local exportBtn = makeActionButton(window, L["Export"], 90, function()
@@ -651,7 +673,7 @@ local function Build()
 			parts[#parts + 1] = Format.PlainError(state.list[i])
 		end
 		showExport(table.concat(parts, "\n\n" .. ("-"):rep(40) .. "\n\n"))
-	end)
+	end, L["Exports every error in the current tab at once. Opens a text box \226\128\148 select all and press Ctrl-C."])
 	exportBtn:SetPoint("LEFT", copyBtn, "RIGHT", 6, 0)
 
 	if Comm.IsAvailable() then
@@ -661,13 +683,13 @@ local function Build()
 			else
 				ns.Print(L["Nothing selected to send."])
 			end
-		end)
+		end, L["Send the selected error to another Sentinel user. Unavailable inside instances."])
 		sendBtn:SetPoint("LEFT", exportBtn, "RIGHT", 6, 0)
 	end
 
 	local reloadBtn = makeActionButton(window, L["Reload UI"], 100, function()
 		ReloadUI()
-	end)
+	end, L["Reload your interface \226\128\148 handy after disabling a broken addon."])
 	reloadBtn:SetPoint("BOTTOMRIGHT", -16, 14)
 
 	local clearBtn = makeActionButton(window, L["Clear"], 90, function()
@@ -680,7 +702,7 @@ local function Build()
 		if UI.UpdateMinimapCount then
 			UI.UpdateMinimapCount()
 		end
-	end)
+	end, L["Permanently delete every stored error from every session."])
 	clearBtn:SetPoint("RIGHT", reloadBtn, "LEFT", -6, 0)
 
 	window:SetScript("OnShow", function()

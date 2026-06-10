@@ -1,7 +1,12 @@
 -- Sentinel: MinimapButton.lua
--- A self-contained, dependency-free minimap button (no LibDBIcon needed). Shows a
--- live error count, supports dragging around the minimap, a rich tooltip, and the
--- modern Addon Compartment.
+-- A self-contained minimap button (no LibDBIcon needed) plus a LibDataBroker-1.1
+-- "data source" launcher. Shows a live error count, supports dragging around the
+-- minimap, a rich tooltip, and the modern Addon Compartment.
+--
+-- The LDB object lets broker display addons (Titan Panel, ChocolateBar, Bazooka,
+-- etc.) surface Sentinel on a bar instead of the minimap ring -- handy when the
+-- minimap is already crowded. The object always registers (even if the minimap
+-- button is hidden) so the two access points are independent.
 --
 -- It only runs an OnUpdate handler *while being dragged* -- never idle (see
 -- optimization guide section 4 on avoiding always-on polling).
@@ -14,6 +19,11 @@ local L = ns.L
 local button
 local iconNormal = ns.ICON
 local iconAlert = ns.ICON_ALERT
+
+-- LibDataBroker is embedded (Libs/embeds.xml); the silent flag means we degrade
+-- gracefully to a minimap-only button if it ever fails to load.
+local LDB = LibStub and LibStub("LibDataBroker-1.1", true)
+local dataObject
 
 -----------------------------------------------------------------------
 -- Position on the minimap ring
@@ -39,12 +49,20 @@ end
 -- Visuals
 -----------------------------------------------------------------------
 local function updateCount()
-	if not button then
-		return
-	end
 	local count = DB.SessionCount()
-	button.count:SetText(count > 0 and (count > 99 and "*" or tostring(count)) or "")
-	button.icon:SetTexture(count > 0 and iconAlert or iconNormal)
+	-- Compute the badge text + icon once, then mirror them onto both the minimap
+	-- button and the broker object (a broker display may be shown even when the
+	-- minimap button is hidden, so the data source is updated independently).
+	local countText = count > 0 and (count > 99 and "*" or tostring(count)) or ""
+	local icon = count > 0 and iconAlert or iconNormal
+	if button then
+		button.count:SetText(countText)
+		button.icon:SetTexture(icon)
+	end
+	if dataObject then
+		dataObject.text = countText
+		dataObject.icon = icon
+	end
 end
 ns.UI.UpdateMinimapCount = updateCount
 
@@ -146,6 +164,29 @@ function ns.UI.SetMinimapShown(shown)
 end
 
 -----------------------------------------------------------------------
+-- LibDataBroker data source (broker bars: Titan, ChocolateBar, Bazooka, ...)
+-----------------------------------------------------------------------
+-- The display addon owns the on-screen button and calls these handlers with that
+-- button as `self`. OnClick/OnEnter map straight onto the same shared handlers the
+-- minimap button uses, so behavior is identical across both access points.
+local function registerBroker()
+	if not LDB then
+		return
+	end
+	dataObject = LDB:NewDataObject(ns.DISPLAY_NAME, {
+		type = "data source",
+		label = ns.DISPLAY_NAME,
+		icon = iconNormal,
+		text = "",
+		OnClick = function(_, mouseButton)
+			handleClick(mouseButton)
+		end,
+		OnEnter = onTooltip,
+		OnLeave = GameTooltip_Hide,
+	})
+end
+
+-----------------------------------------------------------------------
 -- Addon Compartment (modern Blizzard entry point)
 -----------------------------------------------------------------------
 local function registerCompartment()
@@ -172,6 +213,9 @@ local f = CreateFrame("Frame")
 f:RegisterEvent("PLAYER_LOGIN")
 f:SetScript("OnEvent", function(self)
 	self:UnregisterEvent("PLAYER_LOGIN")
+	-- Register the broker first so Build()'s trailing updateCount() seeds the data
+	-- source's text/icon in the same pass that paints the minimap badge.
+	registerBroker()
 	Build()
 	registerCompartment()
 end)

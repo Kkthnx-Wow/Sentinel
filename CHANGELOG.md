@@ -4,6 +4,31 @@ All notable changes to **Sentinel** are documented here. This project follows
 [Semantic Versioning](https://semver.org/) and the spirit of
 [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.3.0] - 2026-06-10
+
+### Added
+
+- LibDataBroker-1.1 "data source" launcher. Sentinel now exposes an LDB object so
+  broker display addons (Titan Panel, ChocolateBar, Bazooka, etc.) can surface the
+  live error count, tooltip, and left/right/shift/alt click actions on a panel
+  instead of the minimap ring — useful when the minimap is already crowded. The
+  data source always registers and stays in sync even when the minimap button is
+  hidden, and the library degrades gracefully if it ever fails to load.
+- Hover tooltips on every tab and action button. Each tab (All bugs, This
+  session, Previous session, Received) and each button (Copy, Export, Send,
+  Clear, Reload UI) now explains what it does on hover, making the difference
+  between Copy (just the selected error) and Export (every error in the current
+  tab) obvious at a glance.
+
+### Fixed
+
+- Copy/Export now produces genuinely plain text. Captured data such as Blizzard
+  POI/map field dumps embeds WoW colour escapes, which previously leaked into the
+  export box — rendering as colour on screen and pasting into Discord/pastebin as
+  raw colour-code garbage. Both the classic hex (`|cAARRGGBB…|r`) and the named
+  (`|cnCOLOR_NAME:…|r`) colour forms are now stripped, so shared reports are
+  clean. The colored detail pane is unaffected.
+
 ## [1.2.0] - 2026-06-09
 
 ### Added
@@ -115,5 +140,7 @@ watcher for the Midnight-era WoW client.
 - Event-driven design with no idle `OnUpdate`, pooled list rows, and
   combat-lockdown-aware behavior throughout.
 
+[1.3.0]: https://github.com/Kkthnx-Wow/Sentinel/releases/tag/v1.3.0
+[1.2.0]: https://github.com/Kkthnx-Wow/Sentinel/releases/tag/v1.2.0
 [1.1.0]: https://github.com/Kkthnx-Wow/Sentinel/releases/tag/v1.1.0
 [1.0.0]: https://github.com/Kkthnx-Wow/Sentinel/releases/tag/v1.0.0
