@@ -170,6 +170,12 @@ local events = {}
 do
 	local badAddons = {}
 	function events.ADDON_ACTION_FORBIDDEN(event, addonName, addonFunc)
+		-- Opt-out: blocked-action (taint) events are a different class from real Lua
+		-- errors and are often just noise from other addons. When disabled we ignore
+		-- them entirely -- no capture, no alert, no storage (checked live via DB.config).
+		if not DB.config.captureTaint then
+			return
+		end
 		local name = addonName or "<name>"
 		-- Only report each offender once -- these can fire continuously.
 		if not badAddons[name] then
@@ -181,6 +187,9 @@ do
 end
 
 function events.MACRO_ACTION_FORBIDDEN(_, addonFunc)
+	if not DB.config.captureTaint then
+		return
+	end
 	grabError(L["Macro tried to call the protected function '%s'."]:format(addonFunc or "<func>"), true)
 end
 events.MACRO_ACTION_BLOCKED = events.MACRO_ACTION_FORBIDDEN

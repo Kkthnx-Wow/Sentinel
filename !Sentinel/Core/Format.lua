@@ -10,8 +10,33 @@ local _, ns = ...
 local Format = ns.Format
 local issecretvalue = ns.G.issecretvalue
 
-local EscapeDecimalNonPrintables = (C_StringUtil and C_StringUtil.EscapeDecimalNonPrintables) or function(s)
-	return s
+-- Bare-name upvalue alias (optimization guide §3). Skips the string metatable
+-- __index lookup that c:byte() does on every matched byte.
+local strbyte = string.byte
+
+-- Escape non-printable bytes so a stray control character in an error message,
+-- stack, or locals dump can't corrupt FontString/EditBox rendering (or, worse,
+-- truncate the visible text at a NUL -- WoW's C-string layer stops there). The
+-- earlier C_StringUtil.EscapeDecimalNonPrintables this relied on does not exist on
+-- the live client, so we do it in Lua.
+--
+-- Notes on the character class (deliberately narrow -- three disjoint ranges so the
+-- gaps are obviously intentional, not a typo):
+--   * Tab (\9), newline (\10) and carriage return (\13) are preserved -- they drive
+--     the multi-line stack/locals layout; escaping them would flatten everything.
+--   * Bytes >= 128 are left alone so UTF-8 text (accents, CJK, our em dashes, and
+--     even |T...|t texture escapes) is not shredded into decimal escapes.
+--   * Matching a class (not ".") means the C-level gsub only calls back on the rare
+--     control byte; normal text scans with zero Lua callbacks (optimization guide §3).
+-- The type guard also short-circuits Secret values: type() reports "secret" for them,
+-- so we return untouched before ever running a string op (Midnight Secret-Value safe).
+local function EscapeDecimalNonPrintables(s)
+	if type(s) ~= "string" then
+		return s
+	end
+	return (s:gsub("[%z\1-\8\11\12\14-\31\127]", function(c)
+		return "\\" .. strbyte(c)
+	end))
 end
 
 -----------------------------------------------------------------------
@@ -68,6 +93,18 @@ local function stripColorCodes(s)
 	s = s:gsub("|c[nN][%w_]+:", "")
 	s = s:gsub("|r", "")
 	return s
+end
+
+-- Make captured text safe for the read-only EditBox used by Copy/Export. Beyond
+-- colour codes, captured locals can contain other WoW escape sequences -- most
+-- notably the Battle.net name token |K...|k (friend/BNet name obfuscation) and
+-- inline textures |T...|t. Fed raw into an EditBox, an unresolved escape makes it
+-- render *blank*, so Copy looked broken on exactly the errors whose coloured detail
+-- pane rendered fine. escapePipes doubles every pipe that isn't part of a colour or
+-- hyperlink escape (so |K -> ||K renders as literal text), then stripColorCodes
+-- removes the colour opens/closes. This mirrors what FormatError does for the pane.
+local function plainify(s)
+	return stripColorCodes(escapePipes(s))
 end
 
 -- Drop the "Interface/AddOns/" boilerplate that every addon path carries -- the
@@ -225,14 +262,14 @@ function Format.PlainError(err)
 		return "<secret error>"
 	end
 
-	msg = stripColorCodes(EscapeDecimalNonPrintables(msg))
+	msg = plainify(EscapeDecimalNonPrintables(msg))
 	local parts = { ("%dx %s"):format(err.counter or 1, msg) }
 
 	if err.stack and not issecretvalue(err.stack) and err.stack ~= "" then
-		parts[#parts + 1] = stripColorCodes(EscapeDecimalNonPrintables(err.stack))
+		parts[#parts + 1] = plainify(EscapeDecimalNonPrintables(err.stack))
 	end
 	if err.locals and not issecretvalue(err.locals) and err.locals ~= "" then
-		parts[#parts + 1] = "Locals:\n" .. stripColorCodes(normalizeLocals(EscapeDecimalNonPrintables(err.locals)))
+		parts[#parts + 1] = "Locals:\n" .. plainify(normalizeLocals(EscapeDecimalNonPrintables(err.locals)))
 	end
 
 	return table.concat(parts, "\n")

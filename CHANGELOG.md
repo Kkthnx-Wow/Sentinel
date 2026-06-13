@@ -4,6 +4,31 @@ All notable changes to **Sentinel** are documented here. This project follows
 [Semantic Versioning](https://semver.org/) and the spirit of
 [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.4.0] - 2026-06-12
+
+### Added
+
+- Setting to ignore blocked-action (taint) errors. A new "Capture blocked-action
+  errors" toggle (on by default) lets you opt out of `ADDON_ACTION_FORBIDDEN` /
+  `ADDON_ACTION_BLOCKED` and the macro equivalents. When off, these are ignored at
+  capture time — no list entry, no sound/chat alert, no auto-open — so unfixable
+  taint noise from other addons stays out of your way.
+
+### Fixed
+
+- Fixed Copy/Export showing an empty box for some errors. When the captured stack
+  or locals contained WoW escape sequences — most often the Battle.net name token
+  (`|K…|k`) seen in friends-list errors, or inline textures (`|T…|t`) — they were
+  fed raw into the read-only EditBox, which renders blank on an escape it can't
+  resolve. Copy/Export now neutralises those sequences (matching the pipe escaping
+  the detail pane already used), so every error copies reliably.
+- Restored non-printable character escaping. It was wired to
+  `C_StringUtil.EscapeDecimalNonPrintables`, which does not exist on the live
+  client, so the guard silently did nothing. Control bytes in an error message,
+  stack, or locals dump are now escaped in Lua (preserving tabs, newlines, and
+  UTF-8 text), so a stray control character can't corrupt the display or truncate
+  the text.
+
 ## [1.3.0] - 2026-06-10
 
 ### Added
@@ -140,6 +165,7 @@ watcher for the Midnight-era WoW client.
 - Event-driven design with no idle `OnUpdate`, pooled list rows, and
   combat-lockdown-aware behavior throughout.
 
+[1.4.0]: https://github.com/Kkthnx-Wow/Sentinel/releases/tag/v1.4.0
 [1.3.0]: https://github.com/Kkthnx-Wow/Sentinel/releases/tag/v1.3.0
 [1.2.0]: https://github.com/Kkthnx-Wow/Sentinel/releases/tag/v1.2.0
 [1.1.0]: https://github.com/Kkthnx-Wow/Sentinel/releases/tag/v1.1.0

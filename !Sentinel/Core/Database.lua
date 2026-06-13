@@ -15,6 +15,7 @@ local DEFAULTS = {
 	sound = true,
 	chat = true,
 	autoOpen = false,
+	captureTaint = true,
 }
 ns.DEFAULTS = DEFAULTS
 

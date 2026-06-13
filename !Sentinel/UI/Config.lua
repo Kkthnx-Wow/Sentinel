@@ -35,6 +35,7 @@ function Config.Initialize()
 	addCheckbox("sound", L["Play a sound on new errors"], L["Plays a short sound (throttled) whenever a new, unique error is caught."])
 	addCheckbox("chat", L["Announce new errors in chat"], L["Prints a short notice to chat when a new error is caught."])
 	addCheckbox("autoOpen", L["Auto-open on error"], L["Automatically open the window when a new error is caught (never during combat)."])
+	addCheckbox("captureTaint", L["Capture blocked-action errors"], L["Capture ADDON_ACTION_FORBIDDEN and other blocked-action (taint) events. Turn off to ignore this taint noise from other addons entirely."])
 
 	-- Wipe button
 	if CreateSettingsButtonInitializer then
