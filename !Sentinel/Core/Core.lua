@@ -61,13 +61,43 @@ local function fireTestError()
 	C_Timer.After(0, function()
 		local victim = nil
 		-- Deliberate nil index -> raises "attempt to index a nil value".
-		return victim.thisIsAFakeSentinelTestError .. sentinelTestLocal
+		---@diagnostic disable-next-line: need-check-nil, undefined-field, inject-field
+		victim.thisIsAFakeSentinelTestError = sentinelTestLocal
 	end)
+end
+
+local function printHelp()
+	ns.Print(L["Usage: /sen [help|status|config|clear|pause|resume|sound|chat|test|build]"])
+	ns.Print(L["/sen or /sentinel - toggle the error window."])
+	ns.Print(L["/sen status - show current capture and alert settings."])
+	ns.Print(L["/sen config - open Sentinel settings."])
+	ns.Print(L["/sen clear - wipe all stored errors."])
+	ns.Print(L["/sen pause - stop capturing new errors."])
+	ns.Print(L["/sen resume - start capturing new errors again."])
+	ns.Print(L["/sen sound - toggle the new-error sound."])
+	ns.Print(L["/sen chat - toggle new-error chat announcements."])
+	ns.Print(L["/sen test - generate a test error."])
+	ns.Print(L["/sen build - print your WoW build information."])
+end
+
+local function printStatus()
+	local config = DB.config
+	local on = L["on"]
+	local off = L["off"]
+	ns.Print(L["Capture"] .. ": " .. (config.capturePaused and off or on))
+	ns.Print(L["Sound"] .. ": " .. (config.sound and on or off))
+	ns.Print(L["Chat alerts"] .. ": " .. (config.chat and on or off))
+	ns.Print(L["Blocked-action capture"] .. ": " .. (config.captureTaint and on or off))
+	ns.Print(L["Stored errors"] .. ": " .. tostring(DB.Count()) .. " (" .. L["this session"] .. ": " .. tostring(DB.SessionCount()) .. ")")
 end
 
 SlashCmdList.SENTINEL = function(msg)
 	msg = (msg or ""):lower():gsub("%s", "")
-	if msg == "config" or msg == "options" or msg == "settings" then
+	if msg == "help" or msg == "?" then
+		printHelp()
+	elseif msg == "status" then
+		printStatus()
+	elseif msg == "config" or msg == "options" or msg == "settings" then
 		ns.Config.Open()
 	elseif msg == "clear" or msg == "wipe" then
 		DB.Reset()
@@ -76,6 +106,18 @@ SlashCmdList.SENTINEL = function(msg)
 		end
 		UI.Refresh()
 		ns.Print(L["All stored errors have been wiped."])
+	elseif msg == "pause" then
+		DB.config.capturePaused = true
+		ns.Print(L["Error capture is now paused."])
+	elseif msg == "resume" or msg == "unpause" then
+		DB.config.capturePaused = false
+		ns.Print(L["Error capture is now active."])
+	elseif msg == "sound" or msg == "mute" then
+		DB.config.sound = not DB.config.sound
+		ns.Print(DB.config.sound and L["Error sound is now on."] or L["Error sound is now off."])
+	elseif msg == "chat" then
+		DB.config.chat = not DB.config.chat
+		ns.Print(DB.config.chat and L["Error chat alerts are now on."] or L["Error chat alerts are now off."])
 	elseif msg == "test" then
 		ns.Print("Generating a test error...")
 		fireTestError()
@@ -104,6 +146,12 @@ ns.API.Toggle = UI.Toggle
 ns.API.GetErrors = DB.GetAll
 ns.API.GetSessionId = DB.GetSessionId
 ns.API.Reset = DB.Reset
+ns.API.IsCapturePaused = function()
+	return DB.config.capturePaused
+end
+ns.API.SetCapturePaused = function(paused)
+	DB.config.capturePaused = not not paused
+end
 
 -- Lets other display addons advertise themselves the way BugSack does.
 function ns.API.FormatError(err)

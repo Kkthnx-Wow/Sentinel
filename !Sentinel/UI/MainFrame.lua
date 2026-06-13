@@ -705,6 +705,23 @@ local function Build()
 	end, L["Permanently delete every stored error from every session."])
 	clearBtn:SetPoint("RIGHT", reloadBtn, "LEFT", -6, 0)
 
+	local deleteBtn = makeActionButton(window, L["Delete"], 90, function()
+		local selected = state.selected
+		if not selected then
+			ns.Print(L["Nothing selected to delete."])
+			return
+		end
+		if DB.RemoveObject(selected) then
+			state.selected = nil
+			UI.Refresh()
+			if UI.UpdateMinimapCount then
+				UI.UpdateMinimapCount()
+			end
+			ns.Print(L["Deleted selected error."])
+		end
+	end, L["Permanently delete only the selected error."])
+	deleteBtn:SetPoint("RIGHT", clearBtn, "LEFT", -6, 0)
+
 	window:SetScript("OnShow", function()
 		-- Smart default on every open: show This session (most relevant to what you're
 		-- doing now). If this session is clean but older bugs exist, fall back to All

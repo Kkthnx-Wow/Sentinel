@@ -74,6 +74,10 @@ local lastWarningTime = 0
 local processing = false
 
 local function grabError(errorMessage, isSimple)
+	if DB.config.capturePaused then
+		return
+	end
+
 	-- Flood protection. Refill a token bucket over time; if we run dry we stop
 	-- capturing until the storm passes (keeps CPU off the render-competing path).
 	local now = GetTime()

@@ -82,6 +82,10 @@ local function onTooltip(self)
 			GameTooltip:AddLine(("%dx %s"):format(e.counter or 1, ns.Format.ShortMessage(e)), 0.8, 0.8, 0.8, true)
 		end
 	end
+	if DB.config.capturePaused then
+		GameTooltip:AddLine(" ")
+		GameTooltip:AddLine(L["Error capture is paused."], 1, 0.25, 0.25, true)
+	end
 	GameTooltip:AddLine(" ")
 	GameTooltip:AddLine(L["Left-click: open the error window"], ns.SYNTAX.path:GetRGB())
 	GameTooltip:AddLine(L["Right-click: open settings"], ns.SYNTAX.path:GetRGB())

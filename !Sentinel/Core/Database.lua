@@ -16,6 +16,7 @@ local DEFAULTS = {
 	chat = true,
 	autoOpen = false,
 	captureTaint = true,
+	capturePaused = false,
 }
 ns.DEFAULTS = DEFAULTS
 
@@ -130,6 +131,17 @@ end
 
 function DB.Remove(index)
 	table.remove(DB.errors, index)
+end
+
+function DB.RemoveObject(errorObject)
+	local errors = DB.errors
+	for i = #errors, 1, -1 do
+		if errors[i] == errorObject then
+			table.remove(errors, i)
+			return true
+		end
+	end
+	return false
 end
 
 function DB.Reset()

@@ -4,6 +4,37 @@ All notable changes to **Sentinel** are documented here. This project follows
 [Semantic Versioning](https://semver.org/) and the spirit of
 [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.5.0] - 2026-06-13
+
+### Added
+
+- Selected-error deletion. A new `Delete` button removes only the currently
+  selected report, leaving the rest of your history intact; `Clear` remains the
+  full wipe action.
+- Manual capture pause/resume. Use the new "Pause error capture" setting, `/sen
+  pause`, or `/sen resume` when a known bad addon is spamming and you want
+  Sentinel to stop recording new errors temporarily. The minimap/broker tooltip
+  now shows when capture is paused.
+- `/sen sound` toggles the new-error sound on/off on the fly, mirroring the
+  existing "Play a sound on new errors" setting without opening the panel.
+- `/sen chat` toggles new-error chat announcements the same way, and `/sen status`
+  prints the current capture, sound, chat, blocked-action, and stored-error state
+  at a glance.
+- `/sen help` now lists every slash command so users can discover `config`,
+  `clear`, `pause`, `resume`, `sound`, `chat`, `status`, `test`, and `build`
+  without reading the README.
+
+### Security
+
+- Hardened inbound error sharing against abuse. Reports received from other
+  players are now fully untrusted: the serialized payload is size-capped before
+  decoding, at most a handful of errors are accepted per message, the message,
+  stack, and locals fields are length-capped, repeats from the same sender are
+  deduped into a single entry, and the "received from" chat line is throttled.
+  Together these stop a malicious or buggy peer from flooding your chat or bloating
+  your SavedVariables. Received entries are also rebuilt from known fields only and
+  stamped with your own clock rather than the sender's.
+
 ## [1.4.0] - 2026-06-12
 
 ### Added
@@ -165,6 +196,7 @@ watcher for the Midnight-era WoW client.
 - Event-driven design with no idle `OnUpdate`, pooled list rows, and
   combat-lockdown-aware behavior throughout.
 
+[1.5.0]: https://github.com/Kkthnx-Wow/Sentinel/releases/tag/v1.5.0
 [1.4.0]: https://github.com/Kkthnx-Wow/Sentinel/releases/tag/v1.4.0
 [1.3.0]: https://github.com/Kkthnx-Wow/Sentinel/releases/tag/v1.3.0
 [1.2.0]: https://github.com/Kkthnx-Wow/Sentinel/releases/tag/v1.2.0
