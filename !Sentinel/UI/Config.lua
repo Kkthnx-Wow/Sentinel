@@ -41,13 +41,31 @@ function Config.Initialize()
 	-- Wipe button
 	if CreateSettingsButtonInitializer then
 		local initializer = CreateSettingsButtonInitializer(L["Wipe all stored errors"], L["Wipe all stored errors"], function()
-			DB.Reset()
-			if ns.UI.UpdateMinimapCount then
-				ns.UI.UpdateMinimapCount()
+			if ns.UI.ConfirmWipe then
+				ns.UI.ConfirmWipe()
 			end
-			ns.UI.Refresh()
-			ns.Print(L["All stored errors have been wiped."])
 		end, L["Permanently delete every stored error from every session."], true)
+		local layout = SettingsPanel:GetLayout(category)
+		if layout then
+			layout:AddInitializer(initializer)
+		end
+	end
+
+	-- Taint log (12.0+ retail only)
+	if CreateSettingsButtonInitializer and ns.TaintLog.IsAvailable() then
+		local initializer = CreateSettingsButtonInitializer(
+			L["Taint log"],
+			L["Taint log"],
+			function()
+				local level = ns.TaintLog.CycleLevel()
+				if ns.UI.UpdateTaintLogButton then
+					ns.UI.UpdateTaintLogButton()
+				end
+				ns.Print(ns.TaintLog.GetStatusLine(level))
+			end,
+			L["Cycle Blizzard taintLog level (0-4). Output is written to taint.log."],
+			false
+		)
 		local layout = SettingsPanel:GetLayout(category)
 		if layout then
 			layout:AddInitializer(initializer)

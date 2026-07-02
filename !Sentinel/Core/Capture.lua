@@ -12,6 +12,7 @@ local L = ns.L
 
 local G = ns.G
 local issecretvalue = G.issecretvalue
+local canaccessvalue = G.canaccessvalue
 local GetTime = G.GetTime
 local time = G.time
 local tostring = tostring
@@ -26,7 +27,7 @@ local MAX_PER_SEC = ns.ERRORS_PER_SEC_BEFORE_THROTTLE
 -- hook (these take effect next reload; the same approach !BugGrabber uses).
 -----------------------------------------------------------------------
 if C_AddOns and C_AddOns.DisableAddOn then
-	for _, name in ipairs({ "!BaudErrorFrame", "!Swatter", "!ImprovedErrorFrame" }) do
+	for _, name in ipairs({ "!BugGrabber", "!BaudErrorFrame", "!Swatter", "!ImprovedErrorFrame" }) do
 		-- pcall: DisableAddOn throws on names it doesn't recognize.
 		pcall(C_AddOns.DisableAddOn, name)
 	end
@@ -99,11 +100,15 @@ local function grabError(errorMessage, isSimple)
 	end
 	msgsAllowed = msgsAllowed - 1
 
+	-- Midnight guard: check before tostring() -- converting a Secret can throw.
+	if errorMessage ~= nil and issecretvalue(errorMessage) then
+		print(ns.COLORS.chat .. ns.DISPLAY_NAME .. ":|r", errorMessage)
+		return
+	end
+
 	errorMessage = tostring(errorMessage)
 
-	-- Midnight guard: a Secret error message must never be inspected, compared,
-	-- or pattern-matched (it would throw "attempt to ... a secret value").
-	-- We can't dedupe or format it safely, so just surface it and bail.
+	-- A Secret string can still surface after tostring; never inspect or dedupe it.
 	if issecretvalue(errorMessage) then
 		print(ns.COLORS.chat .. ns.DISPLAY_NAME .. ":|r", errorMessage)
 		return
@@ -118,6 +123,11 @@ local function grabError(errorMessage, isSimple)
 
 	local session = DB.GetSessionId()
 	local errorObject, index = DB.FetchByMessage(errorMessage)
+	-- Whether this is a genuinely new, unique error (not already stored). The alert
+	-- pipeline (sound / chat / auto-open) keys off this so a single recurring error
+	-- can't replay the sound every few seconds -- matching the "new, unique error"
+	-- wording of the setting. Displays still refresh on repeats (to bump counts).
+	local isNew = not errorObject
 
 	if not errorObject then
 		-- A brand new error. Store the bare object first, then enrich it; if
@@ -155,6 +165,13 @@ local function grabError(errorMessage, isSimple)
 				DB.Remove(index)
 				DB.Store(errorObject)
 			end
+			-- BugGrabber: refresh stack/locals on repeats idle >2 minutes so recurring
+			-- errors don't keep a stale trace from the first occurrence.
+			if not isSimple and elapsed > 120 then
+				local stack, level = GetErrorStack()
+				errorObject.stack = stack or "debugstack returned nil."
+				errorObject.locals = GetErrorLocals(level) or "debuglocals returned nil."
+			end
 		end
 	end
 
@@ -162,8 +179,13 @@ local function grabError(errorMessage, isSimple)
 	-- refresh should be captured normally, not swallowed as recursion.
 	processing = false
 
-	-- Notify displays (window + minimap) without coupling to them.
-	EventRegistry:TriggerEvent("Sentinel.ErrorCaptured", errorObject)
+	if isNew then
+		ns.State.hadNewErrorThisLoad = true
+	end
+
+	-- Notify displays (window + minimap) without coupling to them. isNew lets the
+	-- alert handler (Core.lua) sound/announce only for genuinely new errors.
+	EventRegistry:TriggerEvent("Sentinel.ErrorCaptured", errorObject, isNew)
 end
 
 -----------------------------------------------------------------------
@@ -199,7 +221,12 @@ end
 events.MACRO_ACTION_BLOCKED = events.MACRO_ACTION_FORBIDDEN
 
 function events.LUA_WARNING(_, warnType, warningText)
-	grabError("LUA_WARNING: " .. tostring(warningText or warnType or ""), true)
+	local text = warningText or warnType
+	if text ~= nil and (issecretvalue(text) or not canaccessvalue(text)) then
+		grabError("LUA_WARNING: <restricted>", true)
+		return
+	end
+	grabError("LUA_WARNING: " .. tostring(text or ""), true)
 end
 
 do

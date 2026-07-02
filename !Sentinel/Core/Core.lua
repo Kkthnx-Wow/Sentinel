@@ -7,6 +7,7 @@ local addonName, ns = ...
 local DB = ns.DB
 local UI = ns.UI
 local L = ns.L
+local TaintLog = ns.TaintLog
 
 local GetTime = ns.G.GetTime
 
@@ -18,11 +19,11 @@ local lastAlert = 0
 -----------------------------------------------------------------------
 -- React to a newly captured error
 -----------------------------------------------------------------------
-local function onErrorCaptured()
+-- Fire the noisy alerts (sound + chat + auto-open). Throttled so a burst of new
+-- errors can't flood the chat frame or play sounds every frame.
+local function runAlerts()
 	local config = DB.config
 
-	-- Throttle the noisy alerts (sound + chat) so a spamming error can't flood
-	-- the chat frame or play sounds every frame.
 	local now = GetTime()
 	local alerting = now > lastAlert
 	if alerting then
@@ -41,6 +42,18 @@ local function onErrorCaptured()
 	-- environment -- optimization guide section 9).
 	if config.autoOpen and not InCombatLockdown() and not UI.IsShown() then
 		UI.Open()
+	end
+end
+
+-- EventRegistry invokes a function-type callback as func(owner, ...triggerArgs),
+-- so the args are (owner, errorObject, isNew). We alert ONLY for genuinely new,
+-- unique errors: a recurring error still refreshes the window/minimap (via the UI
+-- subscribers) but must not replay the sound or re-announce in chat every few
+-- seconds. This matches the setting's "new, unique error" wording and the
+-- grabbed-vs-received split established for received reports.
+local function onErrorCaptured(_, _, isNew)
+	if isNew then
+		runAlerts()
 	end
 end
 
@@ -76,6 +89,7 @@ local function printHelp()
 	ns.Print(L["/sen resume - start capturing new errors again."])
 	ns.Print(L["/sen sound - toggle the new-error sound."])
 	ns.Print(L["/sen chat - toggle new-error chat announcements."])
+	ns.Print(L["/sen taintlog - cycle Blizzard taintLog level (0-4)."])
 	ns.Print(L["/sen test - generate a test error."])
 	ns.Print(L["/sen build - print your WoW build information."])
 end
@@ -84,11 +98,23 @@ local function printStatus()
 	local config = DB.config
 	local on = L["on"]
 	local off = L["off"]
-	ns.Print(L["Capture"] .. ": " .. (config.capturePaused and off or on))
+	local captureState
+	if config.capturePaused then
+		captureState = off
+	elseif ns.State.paused then
+		captureState = L["paused (flood protection)"]
+	else
+		captureState = on
+	end
+	ns.Print(L["Capture"] .. ": " .. captureState)
 	ns.Print(L["Sound"] .. ": " .. (config.sound and on or off))
 	ns.Print(L["Chat alerts"] .. ": " .. (config.chat and on or off))
 	ns.Print(L["Blocked-action capture"] .. ": " .. (config.captureTaint and on or off))
 	ns.Print(L["Stored errors"] .. ": " .. tostring(DB.Count()) .. " (" .. L["this session"] .. ": " .. tostring(DB.SessionCount()) .. ")")
+	if TaintLog.IsAvailable() then
+		local level = TaintLog.GetLevel()
+		ns.Print(L["Taint log"] .. ": " .. (level == 0 and off or (level .. " (" .. TaintLog.GetLevelName(level) .. ")")))
+	end
 end
 
 SlashCmdList.SENTINEL = function(msg)
@@ -100,12 +126,7 @@ SlashCmdList.SENTINEL = function(msg)
 	elseif msg == "config" or msg == "options" or msg == "settings" then
 		ns.Config.Open()
 	elseif msg == "clear" or msg == "wipe" then
-		DB.Reset()
-		if UI.UpdateMinimapCount then
-			UI.UpdateMinimapCount()
-		end
-		UI.Refresh()
-		ns.Print(L["All stored errors have been wiped."])
+		UI.ConfirmWipe()
 	elseif msg == "pause" then
 		DB.config.capturePaused = true
 		ns.Print(L["Error capture is now paused."])
@@ -118,8 +139,18 @@ SlashCmdList.SENTINEL = function(msg)
 	elseif msg == "chat" then
 		DB.config.chat = not DB.config.chat
 		ns.Print(DB.config.chat and L["Error chat alerts are now on."] or L["Error chat alerts are now off."])
+	elseif msg == "taintlog" or msg == "taint" then
+		if not TaintLog.IsAvailable() then
+			ns.Print(L["Taint log is not available on this client."])
+		else
+			local level = TaintLog.CycleLevel()
+			if UI.UpdateTaintLogButton then
+				UI.UpdateTaintLogButton()
+			end
+			ns.Print(TaintLog.GetStatusLine(level))
+		end
 	elseif msg == "test" then
-		ns.Print("Generating a test error...")
+		ns.Print(L["Generating a test error..."])
 		fireTestError()
 	elseif msg == "wowbuild" or msg == "build" then
 		-- GetBuildInfo returns the client version, build number, build date, and the
@@ -152,6 +183,18 @@ end
 ns.API.SetCapturePaused = function(paused)
 	DB.config.capturePaused = not not paused
 end
+ns.API.GetVersion = function()
+	return ns.VERSION
+end
+ns.API.IsFloodPaused = function()
+	return ns.State.paused
+end
+ns.API.GetTaintLogLevel = TaintLog.GetLevel
+ns.API.SetTaintLogLevel = TaintLog.SetLevel
+ns.API.CycleTaintLogLevel = TaintLog.CycleLevel
+ns.API.SendSession = function(player, sessionId)
+	return ns.Comm.SendSession(player, sessionId)
+end
 
 -- Lets other display addons advertise themselves the way BugSack does.
 function ns.API.FormatError(err)
@@ -175,9 +218,10 @@ function handlers.PLAYER_LOGIN()
 	if UI.UpdateMinimapCount then
 		UI.UpdateMinimapCount()
 	end
-	-- If errors were caught during loading (before the player logged in), alert once.
-	if DB.SessionCount() > 0 then
-		onErrorCaptured()
+	-- Alert only when a genuinely new error was captured during load (not a deduped
+	-- repeat moved into this session from a prior one).
+	if ns.State.hadNewErrorThisLoad then
+		runAlerts()
 	end
 end
 

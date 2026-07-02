@@ -47,9 +47,16 @@ The leading `!` keeps Sentinel near the top of the load order so it can hook the
 | Command | Description |
 | --- | --- |
 | `/sentinel` or `/sen` | Toggle the Sentinel window |
+| `/sen help` | List every slash command |
+| `/sen status` | Show current capture, alert, taint, and stored-error status |
 | `/sen config` | Open the settings panel |
-| `/sen clear` | Wipe all stored errors |
+| `/sen clear` | Wipe all stored errors (confirmation dialog) |
+| `/sen pause` | Stop recording new errors temporarily |
+| `/sen resume` | Start recording new errors again |
+| `/sen sound` | Toggle the new-error sound on/off |
+| `/sen chat` | Toggle new-error chat announcements on/off |
 | `/sen test` | Fire a genuine test error (real stack + locals) to verify capture |
+| `/sen build` | Print your WoW client/build/interface information |
 
 ### Minimap button
 
@@ -58,7 +65,7 @@ The leading `!` keeps Sentinel near the top of the load order so it can hook the
 | **Left-click** | Open the error window |
 | **Right-click** | Open settings |
 | **Shift-click** | Reload the UI |
-| **Alt-click** | Wipe all stored errors |
+| **Alt-click** | Wipe all stored errors (confirmation dialog) |
 | **Drag** | Reposition around the minimap ring |
 
 ### Broker / data source
@@ -83,12 +90,14 @@ Sentinel also registers an **Addon Compartment** entry, so it's reachable even w
 - **Smart default** — opens to *This session*, or falls back to *All bugs* when the session is clean but older bugs exist, so you never land on an empty list.
 - **Syntax-highlighted detail** — colourised stack traces and locals in a readable, scrollable pane.
 - **Hover tooltips everywhere** — every row shows occurrences, last-seen date/time, session, and (for shared bugs) who sent it; every tab and action button also explains itself on hover, so the difference between **Copy** (just the selected error) and **Export** (every error in the current tab) is always clear.
-- **Copy & Export** — copy a single error or export the whole list as genuinely clean plaintext (WoW colour codes are stripped), ready to paste into a ticket or Discord.
+- **Copy, Export & Delete** — copy a single error, export the whole list as genuinely clean plaintext (WoW colour codes are stripped), or delete just the selected report without wiping your history.
 
 ### Sharing
 - **Send to a player** — share the selected error with another Sentinel user via a chunked, throttled addon channel (AceComm-3.0 + AceSerializer-3.0).
+- **Shift+Send** — whisper every error from the current session in one message (up to 50 per payload).
 - **Received tab** — incoming bugs are tagged with the sender's name and marked with a `*` in the list.
 - **Secret-safe transport** — Secret values are stripped before sending, and sharing is disabled inside instances (where Midnight blocks addon messages) with a nudge to use Export instead.
+- **Hardened receive path** — inbound reports use protocol v1, are size-capped, field-capped, deduped per sender/message, rate-limited per sender, and chat-throttled so a buggy or malicious peer cannot flood your chat or bloat your SavedVariables.
 
 ### Settings
 A clean options page built on Blizzard's own **Settings API**:
@@ -96,7 +105,13 @@ A clean options page built on Blizzard's own **Settings API**:
 - Throttled sound on new errors
 - Chat announcement on new errors
 - Auto-open the window on a new error (never during combat)
-- One-click **wipe** of all stored errors
+- Ignore blocked-action / taint noise entirely
+- Pause and resume all error capture temporarily
+- Cycle Blizzard **taintLog** level (0–4) on retail clients
+- One-click **wipe** of all stored errors (with confirmation)
+
+### Localization
+Full UI translations for **deDE**, **esES/esMX**, **frFR**, **koKR**, **ruRU**, **zhCN**, **zhTW**, **ptBR**, and **itIT** — settings panel, slash help, tooltips, and taint log included.
 
 ### Performance & Safety
 - **Event-driven throughout** — no idle `OnUpdate`; the minimap button only polls while being dragged.

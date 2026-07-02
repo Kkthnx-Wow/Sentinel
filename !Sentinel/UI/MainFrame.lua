@@ -1,7 +1,7 @@
 -- Sentinel: MainFrame.lua
 -- The display window: a two-pane layout with a scrollable error list on the left
 -- and a syntax-highlighted detail pane on the right, plus tabs, search, and the
--- Copy / Export / Send / Clear / Reload actions.
+-- Copy / Export / Send / TaintLog / Delete / Clear / Reload actions.
 --
 -- Built lazily (only created the first time it is opened) and entirely from stable
 -- widget APIs. List rows come from a frame pool (optimization guide sections 5 & 7).
@@ -12,8 +12,15 @@ local DB = ns.DB
 local L = ns.L
 local Format = ns.Format
 local Comm = ns.Comm
+local TaintLog = ns.TaintLog
 
 local ROW_HEIGHT = 18
+local SEARCH_DEBOUNCE = 0.15
+
+-- Reused scratch tables (optimization guide section 3/7).
+local listScratch = {}
+local exportParts = {}
+local searchDebounceTimer
 
 -- Precompute the row label format once (constant colour code + format spec) so the
 -- per-row path in RefreshRows never rebuilds it (optimization guide section 3).
@@ -23,6 +30,7 @@ local ROW_FORMAT = ns.SYNTAX.counter.code .. "%dx|r %s"
 local window, listScroll, listChild, detailScroll, detailChild, detailText, countText, searchBox, listEmpty
 local rowPool
 local tabButtons = {}
+local taintBtn
 
 -- Forward declarations: the export dialog (showExport, below) reuses these skinning
 -- helpers that are implemented further down, so they must exist as upvalues here.
@@ -151,25 +159,36 @@ local function buildList()
 	if tab == "all" then
 		return DB.GetAll()
 	elseif tab == "session" then
-		return DB.GetBySession(DB.GetSessionId())
+		return DB.GetBySession(DB.GetSessionId(), listScratch)
 	elseif tab == "previous" then
-		return DB.GetBySession(DB.GetSessionId() - 1)
+		return DB.GetBySession(DB.GetSessionId() - 1, listScratch)
 	elseif tab == "received" then
-		return DB.GetReceived()
+		return DB.GetReceived(listScratch)
 	elseif tab == "search" then
-		local out = {}
+		wipe(listScratch)
 		local needle = state.searchText:lower()
 		local all = DB.GetAll()
 		for i = 1, #all do
 			local e = all[i]
 			local m = e.message
-			if type(m) == "string" and not ns.G.issecretvalue(m) and m:lower():find(needle, 1, true) then
-				out[#out + 1] = e
+			if type(m) == "string" and ns.NotSecret(m) and m:lower():find(needle, 1, true) then
+				listScratch[#listScratch + 1] = e
 			end
 		end
-		return out
+		return listScratch
 	end
-	return {}
+	wipe(listScratch)
+	return listScratch
+end
+
+local function scheduleSearchRefresh()
+	if searchDebounceTimer then
+		searchDebounceTimer:Cancel()
+	end
+	searchDebounceTimer = C_Timer.After(SEARCH_DEBOUNCE, function()
+		searchDebounceTimer = nil
+		UI.Refresh()
+	end)
 end
 
 -----------------------------------------------------------------------
@@ -408,6 +427,31 @@ local function getStaticPopupEditBox(popup)
 	return popup.EditBox or popup.editBox
 end
 
+local function performWipe()
+	DB.Reset()
+	state.selected = nil
+	if UI.UpdateMinimapCount then
+		UI.UpdateMinimapCount()
+	end
+	UI.Refresh()
+	ns.Print(L["All stored errors have been wiped."])
+end
+
+function UI.ConfirmWipe()
+	StaticPopup_Show("SENTINEL_CONFIRM_WIPE")
+end
+
+StaticPopupDialogs["SENTINEL_CONFIRM_WIPE"] = {
+	text = L["Permanently delete every stored error from every session."] .. "\n\n" .. L["This cannot be undone."],
+	button1 = L["Clear"],
+	button2 = CANCEL,
+	OnAccept = performWipe,
+	timeout = 0,
+	whileDead = true,
+	hideOnEscape = true,
+	preferredIndex = 3,
+}
+
 StaticPopupDialogs["SENTINEL_SEND"] = {
 	text = L["Send the currently selected error to a player."],
 	button1 = L["Send"],
@@ -423,6 +467,30 @@ StaticPopupDialogs["SENTINEL_SEND"] = {
 		Comm.SendError(name, state.selected)
 	end,
 	OnShow = function(self)
+		local editBox = getStaticPopupEditBox(self)
+		if editBox then
+			editBox:SetText("")
+		end
+	end,
+	preferredIndex = 3,
+}
+
+StaticPopupDialogs["SENTINEL_SEND_SESSION"] = {
+	text = L["Send all errors from this session (%d) to a player."],
+	button1 = L["Send"],
+	button2 = CLOSE,
+	hasEditBox = true,
+	timeout = 0,
+	whileDead = true,
+	hideOnEscape = true,
+	enterClicksFirstButton = true,
+	OnAccept = function(self)
+		local editBox = getStaticPopupEditBox(self)
+		local name = editBox and editBox:GetText() or ""
+		Comm.SendSession(name, self.sessionId)
+	end,
+	OnShow = function(self)
+		self.sessionId = DB.GetSessionId()
 		local editBox = getStaticPopupEditBox(self)
 		if editBox then
 			editBox:SetText("")
@@ -506,6 +574,13 @@ function makePane(parent)
 	p:SetBackdropBorderColor(unpack(ns.THEME.paneBorder))
 	return p
 end
+
+local function updateTaintLogButton()
+	if taintBtn then
+		taintBtn:SetText(TaintLog.GetButtonLabel())
+	end
+end
+ns.UI.UpdateTaintLogButton = updateTaintLogButton
 
 local function onTabClick(b)
 	selectTab(b.tab)
@@ -599,7 +674,7 @@ local function Build()
 				b.isActive = false
 				applyButtonColors(b)
 			end
-			UI.Refresh()
+			scheduleSearchRefresh()
 		elseif state.tab == "search" then
 			selectTab("session")
 		end
@@ -668,22 +743,31 @@ local function Build()
 	copyBtn:SetPoint("BOTTOMLEFT", 16, 14)
 
 	local exportBtn = makeActionButton(window, L["Export"], 90, function()
-		local parts = {}
+		wipe(exportParts)
 		for i = 1, #state.list do
-			parts[#parts + 1] = Format.PlainError(state.list[i])
+			exportParts[i] = Format.PlainError(state.list[i])
 		end
-		showExport(table.concat(parts, "\n\n" .. ("-"):rep(40) .. "\n\n"))
+		showExport(table.concat(exportParts, "\n\n" .. ("-"):rep(40) .. "\n\n"))
 	end, L["Exports every error in the current tab at once. Opens a text box \226\128\148 select all and press Ctrl-C."])
 	exportBtn:SetPoint("LEFT", copyBtn, "RIGHT", 6, 0)
 
 	if Comm.IsAvailable() then
+		local sendTooltip = L["Send the selected error to another Sentinel user. Unavailable inside instances."]
+			.. "\n\n"
+			.. L["Shift-click Send to whisper every error from this session instead."]
 		local sendBtn = makeActionButton(window, L["Send"], 90, function()
-			if state.selected then
+			if IsShiftKeyDown() then
+				if DB.SessionCount() == 0 then
+					ns.Print(L["No errors in this session to send."])
+				else
+					StaticPopup_Show("SENTINEL_SEND_SESSION", DB.GetSessionId())
+				end
+			elseif state.selected then
 				StaticPopup_Show("SENTINEL_SEND")
 			else
 				ns.Print(L["Nothing selected to send."])
 			end
-		end, L["Send the selected error to another Sentinel user. Unavailable inside instances."])
+		end, sendTooltip)
 		sendBtn:SetPoint("LEFT", exportBtn, "RIGHT", 6, 0)
 	end
 
@@ -693,15 +777,7 @@ local function Build()
 	reloadBtn:SetPoint("BOTTOMRIGHT", -16, 14)
 
 	local clearBtn = makeActionButton(window, L["Clear"], 90, function()
-		DB.Reset()
-		state.selected = nil
-		UI.Refresh()
-		-- Refresh the minimap count directly. Do NOT fire Sentinel.ErrorCaptured here:
-		-- that event also drives the new-error alert, so reusing it for a wipe would
-		-- falsely announce "a new error was caught" right after clearing.
-		if UI.UpdateMinimapCount then
-			UI.UpdateMinimapCount()
-		end
+		UI.ConfirmWipe()
 	end, L["Permanently delete every stored error from every session."])
 	clearBtn:SetPoint("RIGHT", reloadBtn, "LEFT", -6, 0)
 
@@ -722,6 +798,15 @@ local function Build()
 	end, L["Permanently delete only the selected error."])
 	deleteBtn:SetPoint("RIGHT", clearBtn, "LEFT", -6, 0)
 
+	if TaintLog.IsAvailable() then
+		taintBtn = makeActionButton(window, TaintLog.GetButtonLabel(), 100, function()
+			local level = TaintLog.CycleLevel()
+			updateTaintLogButton()
+			ns.Print(TaintLog.GetStatusLine(level))
+		end, TaintLog.GetTooltip())
+		taintBtn:SetPoint("RIGHT", deleteBtn, "LEFT", -6, 0)
+	end
+
 	window:SetScript("OnShow", function()
 		-- Smart default on every open: show This session (most relevant to what you're
 		-- doing now). If this session is clean but older bugs exist, fall back to All
@@ -731,6 +816,7 @@ local function Build()
 			default = "all"
 		end
 		selectTab(default)
+		updateTaintLogButton()
 	end)
 
 	-- CreateFrame returns a frame that is already shown, so the first UI.Open()'s

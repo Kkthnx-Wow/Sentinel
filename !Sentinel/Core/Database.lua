@@ -54,6 +54,19 @@ do
 
 	migrate(sv)
 
+	-- Drop corrupt rows where legacy grabbers stored a table as the message field
+	-- (BugGrabber lastSanitation pass).
+	if type(sv.lastSanitation) ~= "number" or sv.lastSanitation < 1 then
+		local errors = sv.errors
+		for i = #errors, 1, -1 do
+			local e = errors[i]
+			if type(e) ~= "table" or type(e.message) == "table" then
+				table.remove(errors, i)
+			end
+		end
+		sv.lastSanitation = 1
+	end
+
 	-- Begin a fresh session for this login/reload.
 	sv.session = sv.session + 1
 
@@ -83,9 +96,14 @@ function DB.GetAll()
 	return DB.errors
 end
 
--- Returns a freshly-built array of errors belonging to `sessionId`.
-function DB.GetBySession(sessionId)
-	local out = {}
+local sessionScratch = {}
+local receivedScratch = {}
+
+-- Returns an array of errors belonging to `sessionId`. Reuses `out` when provided
+-- (wipe + refill) to avoid throwaway tables in UI refresh paths.
+function DB.GetBySession(sessionId, out)
+	out = out or sessionScratch
+	wipe(out)
 	local errors = DB.errors
 	for i = 1, #errors do
 		local e = errors[i]
@@ -97,8 +115,9 @@ function DB.GetBySession(sessionId)
 end
 
 -- Returns every error that arrived from another player.
-function DB.GetReceived()
-	local out = {}
+function DB.GetReceived(out)
+	out = out or receivedScratch
+	wipe(out)
 	local errors = DB.errors
 	for i = 1, #errors do
 		local e = errors[i]

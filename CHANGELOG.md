@@ -4,6 +4,96 @@ All notable changes to **Sentinel** are documented here. This project follows
 [Semantic Versioning](https://semver.org/) and the spirit of
 [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.5.5] - 2026-06-16
+
+### Added
+
+- **Wipe confirmation** dialog before Clear, settings Wipe, Alt-click minimap wipe,
+  and `/sen clear` — prevents accidental total data loss.
+- **Comm protocol v1** (`{ v = 1, errors = {…} }`) with legacy bare-array receive
+  support and a localized notice for unknown versions.
+- **Per-sender receive rate cap** (30 new stored reports per 60s) to limit
+  SavedVariables growth from whisper spam.
+- **Taint log** button in the Blizzard settings panel (retail clients with the
+  `taintLog` CVar).
+- **`ns.NotSecret`** helper alongside `ns.IsSecret` / `ns.CanAccess`.
+- **Full locale overrides** for all UI strings (settings, slash help, tooltips,
+  taint log) across deDE, esES/esMX, frFR, koKR, ruRU, zhCN, zhTW, ptBR, itIT.
+
+### Fixed
+
+- **False login alerts** when only deduped load-screen errors were present (alerts
+  now require a genuinely new capture via `hadNewErrorThisLoad`).
+- **Secret guards** on comm receive path (`clip`, dedupe compare) before any
+  string operations on deserialized data.
+
+### Changed
+
+- Search box refresh is **debounced** (150ms) to reduce list rebuild churn while
+  typing.
+- `DB.GetBySession` / `DB.GetReceived` reuse scratch tables; main window list
+  building avoids throwaway `{}` on every refresh.
+- Localized hardcoded English prints (missing-library comm fallback, `/sen test`).
+
+## [1.5.4] - 2026-06-16
+
+### Fixed
+
+- **Minimap button orbit** now uses LibDBIcon-style positioning (minimap shape quads,
+  half-width + 5px radius, 18×18 retail icon) so the tracking ring sits on the
+  outside edge instead of overlapping the minimap border. Repositions when the
+  minimap is resized (Edit Mode).
+
+### Changed
+
+- Minimap button uses file IDs for ring/background art and `SetFixedFrameStrata`
+  where supported, matching current retail minimap button conventions.
+
+## [1.5.3] - 2026-06-16
+
+### Added
+
+- **Stack/locals refresh** on recurring errors idle for more than two minutes (from
+  !BugGrabber), so long-running intermittent bugs keep an up-to-date trace.
+- **Session-wide send**: Shift+click **Send** (or the session send dialog) whispers
+  every error from the current session to another Sentinel user, up to 50 per
+  message. Receive cap raised to match.
+- **DB sanitation** on load strips corrupt rows where `message` was stored as a table
+  (BugGrabber `lastSanitation` pass).
+- **Locale overrides** for deDE, esES/esMX, frFR, koKR, ruRU, zhCN, zhTW, ptBR,
+  and itIT (`Core/LocaleOverrides.lua`).
+
+## [1.5.2] - 2026-06-16
+
+### Added
+
+- **TaintLog** button on the error window footer (between Send and Delete). Left-click
+  cycles Blizzard's `taintLog` CVar (0–4); the label shows the current level
+  (`TaintLog: Off` or `TaintLog: 1` … `TaintLog: 4`). Debug output is written to
+  `taint.log` in your World of Warcraft folder. Also available via `/sen taintlog`
+  and shown in `/sen status`. Hidden on clients without the CVar (Classic flavors).
+
+## [1.5.1] - 2026-06-16
+
+### Fixed
+
+- 12.0.7 / Midnight hardening: error capture now checks `issecretvalue()` **before**
+  calling `tostring()` on the fault message (which can throw on a Secret), and
+  `LUA_WARNING` text is guarded with both `issecretvalue` and `canaccessvalue`
+  before any string concatenation.
+- `!BugGrabber` is now included in the legacy grabber disable list, matching the
+  README and ensuring a clean handoff of `seterrorhandler` ownership.
+- Automatic flood-protection pause (`too many errors per second`) is now visible in
+  `/sen status` and the minimap/broker tooltip, distinct from the manual pause
+  toggle.
+
+### Changed
+
+- TOC now declares both `120007` (12.0.7) and `120005` (12.0.5) interface numbers.
+- Added `ns.IsSecret`, `ns.CanAccess`, `canaccessvalue` caching, and runtime
+  `IS_MIDNIGHT` / `IS_12_0_7` flags for patch-aware code paths.
+- Public API: `Sentinel.GetVersion()` and `Sentinel.IsFloodPaused()`.
+
 ## [1.5.0] - 2026-06-13
 
 ### Added
@@ -23,7 +113,6 @@ All notable changes to **Sentinel** are documented here. This project follows
 - `/sen help` now lists every slash command so users can discover `config`,
   `clear`, `pause`, `resume`, `sound`, `chat`, `status`, `test`, and `build`
   without reading the README.
-
 ### Security
 
 - Hardened inbound error sharing against abuse. Reports received from other
@@ -34,6 +123,16 @@ All notable changes to **Sentinel** are documented here. This project follows
   Together these stop a malicious or buggy peer from flooding your chat or bloating
   your SavedVariables. Received entries are also rebuilt from known fields only and
   stamped with your own clock rather than the sender's.
+
+### Fixed
+
+- The new-error sound (and chat announcement / auto-open) now fires only for
+  genuinely new, unique errors, matching the setting's own description. Previously
+  the alert pipeline ran for every captured error, including repeats, so a single
+  recurring error from another addon would replay the sound and re-print "A new
+  error was caught" every few seconds — and could re-open a window you had just
+  closed. Repeats still refresh the window and minimap count; they just no longer
+  re-alert.
 
 ## [1.4.0] - 2026-06-12
 

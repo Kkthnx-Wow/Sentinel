@@ -1,25 +1,30 @@
-## Interface: 120005, 120007, 11508, 20505, 50504
+## Interface: 120007, 11508, 20505, 50504
 ## Title: |cff00bfffSentinel|r
 ## Notes: A modern, Secret-Value-safe Lua error watcher. Catches, dedupes, persists, and lets you share UI bugs. |n|n|cff5C8BCFDeveloper|cffffffff:|r |nJosh "|CFF7b8489Kkthnx|r" Russell|n|n|cff009cdePayPal|r|cffffffff:|r |n|cffffffffwww.paypal.me/KkthnxTV|r|n|n|cfff96854Patreon|r|cffffffff:|r |n|cffffffffwww.patreon.com/Kkthnx|r
 ## Author: Josh "|CFF7b8489Kkthnx|r" Russell
-## Version: 1.5.0
+## Version: 1.5.5
 ## SavedVariables: SentinelDB
 ## SavedVariablesPerCharacter: SentinelCharDB
 ## LoadSavedVariablesFirst: 1
 ## IconTexture: Interface\COMMON\Indicator-Green
 ## X-Curse-Project-ID: 1569685
 
-## Category-enUS: Development Tools
-## Category-deDE: Entwicklungstools
-## Category-esES: Herramientas de Desarrollo
-## Category-frFR: Outils de Développement
-## Category-ruRU: Инструменты разработки
-## Category-zhCN: 开发工具
-## Category-zhTW: 開發工具
+## Category-enUS: Kkthnx's AddOns
+## Category-deDE: Kkthnx's AddOns
+## Category-esES: Kkthnx's AddOns
+## Category-esMX: Kkthnx's AddOns
+## Category-itIT: Kkthnx's AddOns
+## Category-frFR: Kkthnx's AddOns
+## Category-ptBR: Kkthnx's AddOns
+## Category-ruRU: Kkthnx's AddOns
+## Category-koKR: Kkthnx's AddOns
+## Category-zhCN: Kkthnx's AddOns
+## Category-zhTW: Kkthnx's AddOns
 
 # --- Core (load order matters: capture must hook the error handler as early as possible) ---
 Core\Namespace.lua
 Core\Locales.lua
+Core\LocaleOverrides.lua
 Core\Database.lua
 Core\Capture.lua
 
@@ -29,6 +34,7 @@ Libs\embeds.xml
 # --- Formatting + sharing ---
 Core\Format.lua
 Core\Comm.lua
+Core\TaintLog.lua
 
 # --- User interface ---
 UI\MainFrame.lua

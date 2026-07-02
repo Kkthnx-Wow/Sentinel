@@ -19,7 +19,7 @@ ns.State = {
 	initialized = false,
 	sessionId = -1,
 	paused = false,
-	soundTime = 0,
+	hadNewErrorThisLoad = false,
 }
 
 -----------------------------------------------------------------------
@@ -102,10 +102,30 @@ ns.G = {
 	issecretvalue = _G.issecretvalue or function()
 		return false
 	end,
+	canaccessvalue = _G.canaccessvalue or function()
+		return true
+	end,
 	GetTime = GetTime,
 	time = time,
 	IsInInstance = IsInInstance,
 }
+
+-- Midnight helpers (Peterodox-style: "is secret" vs "can tainted code use it").
+function ns.IsSecret(v)
+	return v ~= nil and ns.G.issecretvalue(v)
+end
+
+function ns.NotSecret(v)
+	return v == nil or not ns.G.issecretvalue(v)
+end
+
+function ns.CanAccess(v)
+	return v ~= nil and ns.G.canaccessvalue(v)
+end
+
+local tocVersion = tonumber(select(4, GetBuildInfo()) or 0) or 0
+ns.IS_MIDNIGHT = tocVersion >= 120000
+ns.IS_12_0_7 = tocVersion >= 120007
 
 -----------------------------------------------------------------------
 -- Lightweight chat printer
