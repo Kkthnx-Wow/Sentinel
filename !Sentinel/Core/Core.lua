@@ -1,12 +1,13 @@
 -- Sentinel: Core.lua
 -- Loads last. Wires together capture notifications, alerts, slash commands, the
--- settings panel, and the public API. Uses an event dispatch table (optimization
--- guide section 5) rather than an if/elseif chain.
+-- settings panel, and the public API. Uses an event dispatch table rather than an
+-- if/elseif chain (optimization section 5).
 
 local addonName, ns = ...
 local DB = ns.DB
 local UI = ns.UI
 local L = ns.L
+local Format = ns.Format
 local TaintLog = ns.TaintLog
 
 local GetTime = ns.G.GetTime
@@ -21,7 +22,7 @@ local lastAlert = 0
 -----------------------------------------------------------------------
 -- Fire the noisy alerts (sound + chat + auto-open). Throttled so a burst of new
 -- errors can't flood the chat frame or play sounds every frame.
-local function runAlerts()
+local function runAlerts(errorObject)
 	local config = DB.config
 
 	local now = GetTime()
@@ -35,40 +36,70 @@ local function runAlerts()
 	end
 
 	if alerting and config.chat then
-		ns.Print(L["A new error was caught. Type /sentinel to view it."])
+		local link = errorObject and Format.GetChatLink(errorObject)
+		if link and link ~= "" then
+			-- Clickable chat link that routes through SetItemRef into UI.OpenToError.
+			ns.Print(L["A new error was caught: %s"]:format(link))
+		else
+			ns.Print(L["A new error was caught. Type /sentinel to view it."])
+		end
 	end
 
-	-- Auto-open, but never during combat (avoids fighting the secure/lockdown
-	-- environment -- optimization guide section 9).
-	if config.autoOpen and not InCombatLockdown() and not UI.IsShown() then
-		UI.Open()
+	-- Auto-open never happens during combat, since a window that fights Escape and
+	-- focus under lockdown is a nuisance. Queue it for after combat instead.
+	if config.autoOpen and not UI.IsShown() then
+		if InCombatLockdown() then
+			ns.State.reopenAfterCombat = true
+		else
+			UI.Open()
+		end
 	end
 end
 
--- EventRegistry invokes a function-type callback as func(owner, ...triggerArgs),
--- so the args are (owner, errorObject, isNew). We alert ONLY for genuinely new,
--- unique errors: a recurring error still refreshes the window/minimap (via the UI
--- subscribers) but must not replay the sound or re-announce in chat every few
--- seconds. This matches the setting's "new, unique error" wording and the
--- grabbed-vs-received split established for received reports.
-local function onErrorCaptured(_, _, isNew)
+-- EventRegistry invokes a function callback as func(owner, ...triggerArgs), so the
+-- args are (owner, errorObject, isNew). We alert only for genuinely new, unique
+-- errors. A recurring error still refreshes the window and minimap through the UI
+-- subscribers, but it must not replay the sound or re-announce in chat every few
+-- seconds. That matches the setting's "new, unique error" wording and the split
+-- between grabbed and received reports.
+local function onErrorCaptured(_, errorObject, isNew)
 	if isNew then
-		runAlerts()
+		runAlerts(errorObject)
 	end
 end
 
--- Unique owner table (CallbackRegistryMixin forbids the same owner registering an
--- event twice; the UI files subscribe to this same event with their own owners).
+-- Unique owner table. CallbackRegistryMixin forbids the same owner registering an
+-- event twice, and the UI files subscribe to this same event with their own owners.
 local CB_OWNER = {}
 EventRegistry:RegisterCallback("Sentinel.ErrorCaptured", onErrorCaptured, CB_OWNER)
+
+-----------------------------------------------------------------------
+-- Chat hyperlinks (LinkTypes.AddOn routed through the "SetItemRef" event)
+-----------------------------------------------------------------------
+-- Links look like |Haddon:sentinel:<id>|h...|h and are local only. The AddOn link
+-- handler just rebroadcasts SetItemRef, and we match on the id, not a fragile
+-- tostring of a table.
+local LINK_OWNER = {}
+EventRegistry:RegisterCallback("SetItemRef", function(_, link)
+	local id = link and tonumber(link:match("^addon:sentinel:(%d+)$"))
+	if not id then
+		return
+	end
+	local err = DB.GetById(id)
+	if err then
+		UI.OpenToError(err)
+	else
+		ns.Print(L["That error is no longer stored."])
+	end
+end, LINK_OWNER)
 
 -----------------------------------------------------------------------
 -- Slash commands
 -----------------------------------------------------------------------
 SLASH_SENTINEL1 = "/sentinel"
 SLASH_SENTINEL2 = "/sen"
--- Fire a genuine runtime error on the next frame so it travels through
--- seterrorhandler with a real stack + locals -- the most faithful capture test.
+-- Fire a genuine runtime error on the next frame so it travels through the error
+-- handler with a real stack and locals, which is the most faithful capture test.
 local function fireTestError()
 	local sentinelTestLocal = "this is a test local captured by Sentinel"
 	C_Timer.After(0, function()
@@ -154,7 +185,7 @@ SlashCmdList.SENTINEL = function(msg)
 		fireTestError()
 	elseif msg == "wowbuild" or msg == "build" then
 		-- GetBuildInfo returns the client version, build number, build date, and the
-		-- numeric interface (TOC) version -- everything useful for a bug report.
+		-- numeric interface (TOC) version, everything useful for a bug report.
 		local version, build, date, tocVersion = GetBuildInfo()
 		local label = ns.SYNTAX.varName.code
 		local value = ns.SYNTAX.message.code
@@ -196,7 +227,7 @@ ns.API.SendSession = function(player, sessionId)
 	return ns.Comm.SendSession(player, sessionId)
 end
 
--- Lets other display addons advertise themselves the way BugSack does.
+-- Public format helper for external consumers of the Sentinel API.
 function ns.API.FormatError(err)
 	return ns.Format.FormatError(err)
 end

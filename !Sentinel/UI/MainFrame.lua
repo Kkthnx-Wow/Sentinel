@@ -1,5 +1,5 @@
 -- Sentinel: MainFrame.lua
--- The display window: a two-pane layout with a scrollable error list on the left
+-- The display window is a two-pane layout with a scrollable error list on the left
 -- and a syntax-highlighted detail pane on the right, plus tabs, search, and the
 -- Copy / Export / Send / TaintLog / Delete / Clear / Reload actions.
 --
@@ -17,6 +17,15 @@ local TaintLog = ns.TaintLog
 local ROW_HEIGHT = 18
 local SEARCH_DEBOUNCE = 0.15
 
+-- Skip tooltips in instance combat, where frame APIs can trip secret or taint noise.
+local function shouldSuppressTooltip()
+	if not InCombatLockdown() then
+		return false
+	end
+	local _, instanceType = IsInInstance()
+	return instanceType == "raid" or instanceType == "party" or instanceType == "pvp" or instanceType == "arena"
+end
+
 -- Reused scratch tables (optimization guide section 3/7).
 local listScratch = {}
 local exportParts = {}
@@ -32,7 +41,11 @@ local rowPool
 local tabButtons = {}
 local taintBtn
 
--- Forward declarations: the export dialog (showExport, below) reuses these skinning
+-- Set true only while the combat auto-hide is calling window:Hide(), so the
+-- OnHide handler can tell that forced hide apart from a real user close.
+local combatHiding = false
+
+-- Forward declarations. The export dialog (showExport, below) reuses these skinning
 -- helpers that are implemented further down, so they must exist as upvalues here.
 local applyMawBorder, makePane
 
@@ -73,7 +86,7 @@ local function applyButtonColors(b)
 	else
 		tintButtonTextures(b, BUTTON_REST_R, BUTTON_REST_G, BUTTON_REST_B)
 	end
-	-- Selected-tab halo: the active/rest vertex tints are too close to read on
+	-- Selected-tab halo. The active and rest vertex tints are too close to read on
 	-- their own, so a soft additive glow behind the active tab makes the current
 	-- view obvious. Only tabs have sentinelGlow (action/close buttons skip it).
 	if b.sentinelGlow then
@@ -141,6 +154,9 @@ end
 -- the colour hooks set in skinButton, so both still fire.
 local function setButtonTooltip(b, title, body)
 	b:HookScript("OnEnter", function(self)
+		if shouldSuppressTooltip() then
+			return
+		end
 		GameTooltip:SetOwner(self, "ANCHOR_TOP")
 		GameTooltip:AddLine(title, 0, 0.749, 1)
 		if body then
@@ -152,7 +168,7 @@ local function setButtonTooltip(b, title, body)
 end
 
 -----------------------------------------------------------------------
--- Data: build the list for the active tab
+-- Build the list for the active tab
 -----------------------------------------------------------------------
 local function buildList()
 	local tab = state.tab
@@ -206,9 +222,10 @@ local function updateDetail()
 		text = "|cff808080" .. L["Select an error on the left to see its full stack trace and locals here."] .. "|r"
 	end
 	detailText:SetText(text)
-	-- Resize the scroll child so the scrollbar reflects the full formatted body.
+	-- Resize the scroll child height so the scrollbar reflects the full formatted
+	-- body. Width is owned by the scroll frame's OnSizeChanged, so leave it alone.
 	local height = detailText:GetStringHeight()
-	detailChild:SetSize(458, math.max(height + 4, 1))
+	detailChild:SetHeight(math.max(height + 4, 1))
 	if detailScroll then
 		-- Snap back to the top when switching errors. With ScrollFrameTemplate the
 		-- thin scrollbar drives the position, so nudge its value too (guarded, since
@@ -222,6 +239,29 @@ local function updateDetail()
 	end
 end
 
+-- Detail-pane font size. We change only the pixel size on the pane's existing font
+-- file so the face stays consistent, then re-apply the base colour (SetFont keeps the
+-- vertex colour, but we set it again to be safe) and reflow the wrapped height.
+local DETAIL_FONT_SIZES = { 12, 14, 16, 18 }
+local function applyDetailFont()
+	if not detailText then
+		return
+	end
+	local index = DB.config.detailFontSize or 2
+	local size = DETAIL_FONT_SIZES[index] or DETAIL_FONT_SIZES[2]
+	local file, _, flags = detailText:GetFont()
+	if file then
+		detailText:SetFont(file, size, flags)
+		detailText:SetTextColor(ns.SYNTAX.stackText:GetRGB())
+	end
+	updateDetail()
+end
+
+function UI.SetDetailFontSize(index)
+	DB.config.detailFontSize = index
+	applyDetailFont()
+end
+
 -----------------------------------------------------------------------
 -- List rows (frame pool)
 -----------------------------------------------------------------------
@@ -231,9 +271,12 @@ local function onRowClick(row)
 	updateDetail()
 end
 
--- Hover summary: when it last fired, how many times, which session, and -- if the
+-- Hover summary, when it last fired, how many times, which session, and -- if the
 -- bug was shared by another player -- who sent it.
 local function onRowEnter(row)
+	if shouldSuppressTooltip() then
+		return
+	end
 	local err = row.errorObject
 	if not err then
 		return
@@ -253,6 +296,18 @@ local function onRowEnter(row)
 	GameTooltip:AddLine(" ")
 	GameTooltip:AddLine(L["Click to view full details."], 0.5, 0.5, 0.5)
 	GameTooltip:Show()
+end
+
+local function resetRow(_, row)
+	row:Hide()
+	row:ClearAllPoints()
+	row.errorObject = nil
+	if row.sel then
+		row.sel:Hide()
+	end
+	if row.text then
+		row.text:SetText("")
+	end
 end
 
 local function acquireRow()
@@ -331,7 +386,7 @@ function UI.Refresh()
 	end
 	state.list = buildList()
 
-	-- Keep the current selection if it's still present; otherwise pick the newest.
+	-- Keep the current selection if it's still present, otherwise pick the newest.
 	local stillThere = false
 	for i = 1, #state.list do
 		if state.list[i] == state.selected then
@@ -373,7 +428,7 @@ local function showExport(text)
 		exportFrame:SetSize(560, 380)
 		exportFrame:SetPoint("CENTER")
 		exportFrame:SetFrameStrata("FULLSCREEN_DIALOG")
-		-- Same skin as the main window: Maw border + dark #121212 fill.
+		-- Same skin as the main window, a Maw border with a dark #121212 fill.
 		applyMawBorder(exportFrame)
 		exportFrame:EnableMouse(true)
 		exportFrame:SetMovable(true)
@@ -539,7 +594,7 @@ function applyMawBorder(frame)
 				nine.Center:SetColorTexture(unpack(ns.THEME.window))
 				nine.Center:SetAlpha(1)
 			else
-				-- No center piece: inset the backdrop fill so it stays inside the edge.
+				-- No center piece, so inset the backdrop fill to keep it inside the edge.
 				frame:SetBackdrop({
 					bgFile = "Interface\\Buttons\\WHITE8X8",
 					insets = { left = 6, right = 6, top = 6, bottom = 6 },
@@ -550,7 +605,7 @@ function applyMawBorder(frame)
 		end
 	end
 
-	-- Fallback: classic gold dialog border.
+	-- Fallback, the classic gold dialog border.
 	frame:SetBackdrop({
 		bgFile = "Interface\\Buttons\\WHITE8X8",
 		edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
@@ -597,7 +652,7 @@ local function makeTab(parent, text, tab, tooltip)
 		setButtonTooltip(b, text, tooltip)
 	end
 
-	-- Selected-tab highlight: Blizzard's auction-house nav "select" atlas is built
+	-- Selected-tab highlight. The auction-house nav "select" atlas is built
 	-- for rectangular nav buttons, so it hugs the tab shape. Drawn on OVERLAY with
 	-- additive blend and the theme cyan tint so it sits over the grey button art
 	-- without hiding the bevel or label.
@@ -617,7 +672,7 @@ end
 
 local function Build()
 	window = CreateFrame("Frame", "SentinelFrame", UIParent, "BackdropTemplate")
-	window:SetSize(820, 500)
+	window:SetSize(900, 500)
 	window:SetPoint("CENTER")
 	window:SetFrameStrata("DIALOG")
 	window:SetToplevel(true)
@@ -634,7 +689,7 @@ local function Build()
 	title:SetPoint("TOPLEFT", 16, -16)
 	title:SetText(ns.COLORS.chat .. ns.DISPLAY_NAME .. "|r")
 
-	-- Version tag: two font sizes smaller than the title (Large -> Normal -> Small),
+	-- Version tag, two font sizes smaller than the title (Large -> Normal -> Small),
 	-- Muted Charcoal (#3F3F46), baseline-aligned just to the right of the name.
 	local version = window:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
 	version:SetPoint("BOTTOMLEFT", title, "BOTTOMRIGHT", 5, 0)
@@ -687,13 +742,13 @@ local function Build()
 	divider:SetPoint("TOPRIGHT", -14, -70)
 	divider:SetColorTexture(1, 1, 1, 0.10)
 
-	-- Left: error list inside a flat charcoal pane
+	-- Left pane, the error list inside a flat charcoal pane
 	local listInset = makePane(window)
 	listInset:SetPoint("TOPLEFT", 14, -78)
 	listInset:SetSize(288, 376)
 
 	-- ScrollFrameTemplate (10.1+) is the modern replacement for the chunky
-	-- UIPanelScrollFrameTemplate: it auto-creates a thin MinimalScrollBar and
+	-- UIPanelScrollFrameTemplate, and it auto-creates a thin MinimalScrollBar and
 	-- manages range + mouse wheel itself, so we no longer wire those by hand.
 	listScroll = CreateFrame("ScrollFrame", nil, listInset, "ScrollFrameTemplate")
 	listScroll:SetPoint("TOPLEFT", 6, -12)
@@ -705,11 +760,11 @@ local function Build()
 	listEmpty = listInset:CreateFontString(nil, "ARTWORK", "GameFontDisableLarge")
 	listEmpty:SetPoint("CENTER", 0, 20)
 	listEmpty:SetWidth(240)
-	listEmpty:SetText(L["No errors caught \226\128\148 your UI is clean."])
+	listEmpty:SetText(L["No errors caught, your UI is clean."])
 
-	rowPool = CreateFramePool("Button", listChild)
+	rowPool = CreateFramePool("Button", listChild, nil, resetRow)
 
-	-- Right: detail pane inside a flat charcoal pane
+	-- Right pane, the detail view inside a flat charcoal pane
 	local detailInset = makePane(window)
 	detailInset:SetPoint("TOPLEFT", listInset, "TOPRIGHT", 12, 0)
 	detailInset:SetPoint("BOTTOMRIGHT", window, "BOTTOMRIGHT", -14, 44)
@@ -718,28 +773,40 @@ local function Build()
 	detailScroll:SetPoint("TOPLEFT", 6, -12)
 	detailScroll:SetPoint("BOTTOMRIGHT", -26, 6)
 
-	-- FontString (not EditBox): read-only detail text with reliable per-token |c
+	-- FontString (not EditBox), read-only detail text with reliable per-token |c
 	-- coloring. EditBox mishandles multiple inline color codes on a single line,
 	-- which left locals looking monochromatic even when Format.lua painted each
 	-- token. Copy/Export still use PlainError, so nothing is lost.
 	detailChild = CreateFrame("Frame", nil, detailScroll)
-	detailChild:SetSize(458, 1)
+	detailChild:SetSize(1, 1)
 	detailText = detailChild:CreateFontString(nil, "ARTWORK", "ChatFontNormal")
+	-- Anchor both sides so the text always fills the scroll child, and let that
+	-- child track the scroll frame's width. The window can be resized wider
+	-- without leaving the detail text wrapping short of the pane edge.
 	detailText:SetPoint("TOPLEFT")
-	detailText:SetWidth(458)
+	detailText:SetPoint("RIGHT")
 	detailText:SetJustifyH("LEFT")
 	detailText:SetJustifyV("TOP")
 	detailText:SetWordWrap(true)
 	detailText:SetNonSpaceWrap(false)
 	detailText:SetTextColor(ns.SYNTAX.stackText:GetRGB())
 	detailScroll:SetScrollChild(detailChild)
+	detailScroll:SetScript("OnSizeChanged", function(_, width)
+		if width and width > 0 then
+			detailChild:SetWidth(width)
+			-- Reflow the wrapped height for the new width.
+			updateDetail()
+		end
+	end)
+	-- Apply the saved detail font size to the freshly built pane.
+	applyDetailFont()
 
 	-- Bottom action buttons
 	local copyBtn = makeActionButton(window, L["Copy"], 90, function()
 		if state.selected then
 			showExport(Format.PlainError(state.selected))
 		end
-	end, L["Copies the one error selected on the left. Opens a text box \226\128\148 select all and press Ctrl-C."])
+	end, L["Copies the one error selected on the left. Opens a text box, select all and press Ctrl-C."])
 	copyBtn:SetPoint("BOTTOMLEFT", 16, 14)
 
 	local exportBtn = makeActionButton(window, L["Export"], 90, function()
@@ -748,15 +815,13 @@ local function Build()
 			exportParts[i] = Format.PlainError(state.list[i])
 		end
 		showExport(table.concat(exportParts, "\n\n" .. ("-"):rep(40) .. "\n\n"))
-	end, L["Exports every error in the current tab at once. Opens a text box \226\128\148 select all and press Ctrl-C."])
+	end, L["Exports every error in the current tab at once. Opens a text box, select all and press Ctrl-C."])
 	exportBtn:SetPoint("LEFT", copyBtn, "RIGHT", 6, 0)
 
 	if Comm.IsAvailable() then
-		local sendTooltip = L["Send the selected error to another Sentinel user. Unavailable inside instances."]
-			.. "\n\n"
-			.. L["Shift-click Send to whisper every error from this session instead."]
 		local sendBtn = makeActionButton(window, L["Send"], 90, function()
 			if IsShiftKeyDown() then
+				-- Power-user shortcut. The primary path is the Send session button.
 				if DB.SessionCount() == 0 then
 					ns.Print(L["No errors in this session to send."])
 				else
@@ -767,21 +832,32 @@ local function Build()
 			else
 				ns.Print(L["Nothing selected to send."])
 			end
-		end, sendTooltip)
+		end, L["Send the selected error to another Sentinel user. Unavailable inside instances."]
+			.. "\n\n"
+			.. L["Shortcut: Shift-click Send also sends the whole session."])
 		sendBtn:SetPoint("LEFT", exportBtn, "RIGHT", 6, 0)
+
+		local sessionBtn = makeActionButton(window, L["Send session"], 100, function()
+			if DB.SessionCount() == 0 then
+				ns.Print(L["No errors in this session to send."])
+			else
+				StaticPopup_Show("SENTINEL_SEND_SESSION", DB.GetSessionId())
+			end
+		end, L["Send every error from this session to another Sentinel user. Unavailable inside instances."])
+		sessionBtn:SetPoint("LEFT", sendBtn, "RIGHT", 6, 0)
 	end
 
 	local reloadBtn = makeActionButton(window, L["Reload UI"], 100, function()
 		ReloadUI()
-	end, L["Reload your interface \226\128\148 handy after disabling a broken addon."])
+	end, L["Reload your interface, handy after disabling a broken addon."])
 	reloadBtn:SetPoint("BOTTOMRIGHT", -16, 14)
 
-	local clearBtn = makeActionButton(window, L["Clear"], 90, function()
+	local clearBtn = makeActionButton(window, L["Clear"], 80, function()
 		UI.ConfirmWipe()
 	end, L["Permanently delete every stored error from every session."])
 	clearBtn:SetPoint("RIGHT", reloadBtn, "LEFT", -6, 0)
 
-	local deleteBtn = makeActionButton(window, L["Delete"], 90, function()
+	local deleteBtn = makeActionButton(window, L["Delete"], 80, function()
 		local selected = state.selected
 		if not selected then
 			ns.Print(L["Nothing selected to delete."])
@@ -799,7 +875,7 @@ local function Build()
 	deleteBtn:SetPoint("RIGHT", clearBtn, "LEFT", -6, 0)
 
 	if TaintLog.IsAvailable() then
-		taintBtn = makeActionButton(window, TaintLog.GetButtonLabel(), 100, function()
+		taintBtn = makeActionButton(window, TaintLog.GetButtonLabel(), 110, function()
 			local level = TaintLog.CycleLevel()
 			updateTaintLogButton()
 			ns.Print(TaintLog.GetStatusLine(level))
@@ -808,15 +884,44 @@ local function Build()
 	end
 
 	window:SetScript("OnShow", function()
-		-- Smart default on every open: show This session (most relevant to what you're
-		-- doing now). If this session is clean but older bugs exist, fall back to All
-		-- bugs so the window never opens to a confusingly empty list.
-		local default = "session"
-		if DB.SessionCount() == 0 and DB.Count() > 0 then
-			default = "all"
+		-- Chat-link open, jump straight to that error (session tab when possible).
+		local pending = ns.State.pendingError
+		ns.State.pendingError = nil
+		if pending then
+			local tab = (pending.session == DB.GetSessionId()) and "session" or "all"
+			state.tab = tab
+			if tab ~= "search" then
+				searchBox:SetText("")
+			end
+			for _, b in pairs(tabButtons) do
+				b.isActive = (b.tab == tab)
+				applyButtonColors(b)
+			end
+			state.selected = pending
+			UI.Refresh()
+		else
+			-- Smart default on every open, show This session (most relevant to what you're
+			-- doing now). If this session is clean but older bugs exist, fall back to All
+			-- bugs so the window never opens to a confusingly empty list.
+			local default = "session"
+			if DB.SessionCount() == 0 and DB.Count() > 0 then
+				default = "all"
+			end
+			selectTab(default)
 		end
-		selectTab(default)
 		updateTaintLogButton()
+	end)
+
+	-- A user-initiated close (Escape via UISpecialFrames, the X button, or the
+	-- /sentinel toggle) must cancel any queued post-combat reopen. Otherwise a
+	-- window you closed mid-combat would spring back the instant combat ends,
+	-- which is exactly the "stuck to combat" behaviour we are fixing. The combat
+	-- auto-hide sets combatHiding first so its own Hide() stays exempt.
+	window:SetScript("OnHide", function()
+		if combatHiding then
+			return
+		end
+		ns.State.reopenAfterCombat = false
 	end)
 
 	-- CreateFrame returns a frame that is already shown, so the first UI.Open()'s
@@ -839,7 +944,29 @@ function UI.Open()
 	window:Show()
 end
 
+-- Open or refocus the window on a specific stored error, used by chat hyperlinks.
+function UI.OpenToError(errorObject)
+	if type(errorObject) ~= "table" then
+		return
+	end
+	ns.State.pendingError = errorObject
+	if UI.IsShown() then
+		-- Already visible, so OnShow won't re-fire. Apply the same path manually.
+		local onShow = window and window:GetScript("OnShow")
+		if onShow then
+			onShow(window)
+		end
+	else
+		UI.Open()
+	end
+end
+
 function UI.Close()
+	-- Manual close cancels a pending post-combat restore.
+	ns.State.reopenAfterCombat = false
+	if exportFrame and exportFrame:IsShown() then
+		exportFrame:Hide()
+	end
 	if window then
 		window:Hide()
 	end
@@ -853,14 +980,73 @@ function UI.Toggle()
 	end
 end
 
--- Refresh live whether a bug is caught locally or received from another player.
--- One shared named handler (no per-registration closure -- optimization guide
--- section 3) reused across both events. (Unique owner table: CallbackRegistryMixin
--- forbids one owner registering the *same* event twice, but distinct events are
--- fine, and other Sentinel files subscribe to these events with their own owners.)
+-----------------------------------------------------------------------
+-- Combat visibility
+-- Hide the error window on pull so Escape and clicks aren't stuck under
+-- lockdown, then restore after combat if we hid it or queued an auto-open.
+-- PLAYER_DEAD and PLAYER_ENTERING_WORLD resync in case regen misses when you
+-- die mid-encounter.
+-----------------------------------------------------------------------
+local function tryReopenAfterCombat()
+	if not ns.State.reopenAfterCombat then
+		return
+	end
+	if InCombatLockdown() then
+		return
+	end
+	ns.State.reopenAfterCombat = false
+	UI.Open()
+end
+
+local combatFrame = CreateFrame("Frame")
+combatFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
+combatFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+combatFrame:RegisterEvent("PLAYER_DEAD")
+combatFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+combatFrame:SetScript("OnEvent", function(_, event)
+	if event == "PLAYER_REGEN_DISABLED" then
+		-- When auto-hide is turned off, leave the window alone through combat.
+		-- The player can still close it by hand at any time.
+		if not DB.config.hideInCombat then
+			return
+		end
+		local wasOpen = UI.IsShown()
+		if wasOpen or (exportFrame and exportFrame:IsShown()) then
+			ns.State.reopenAfterCombat = true
+		end
+		if exportFrame and exportFrame:IsShown() then
+			exportFrame:Hide()
+		end
+		if wasOpen then
+			-- Direct, flagged Hide so OnHide sees combatHiding and keeps the
+			-- reopen queued instead of treating this as a user close.
+			combatHiding = true
+			window:Hide()
+			combatHiding = false
+		end
+	elseif event == "PLAYER_REGEN_ENABLED" or event == "PLAYER_DEAD" or event == "PLAYER_ENTERING_WORLD" then
+		tryReopenAfterCombat()
+	end
+end)
+
+-- Refresh when a bug is caught locally or received. Coalesce bursts to one
+-- end-of-frame rebuild so an error storm can't restack the list N times/frame.
 local CB_OWNER = {}
-local function onErrorEvent()
+local refreshQueued = false
+local function flushRefresh()
+	refreshQueued = false
 	UI.Refresh()
 end
-EventRegistry:RegisterCallback("Sentinel.ErrorCaptured", onErrorEvent, CB_OWNER)
-EventRegistry:RegisterCallback("Sentinel.ErrorReceived", onErrorEvent, CB_OWNER)
+local function queueRefresh()
+	if refreshQueued then
+		return
+	end
+	-- Hidden window, Refresh early-outs anyway, so skip the timer.
+	if not window or not window:IsShown() then
+		return
+	end
+	refreshQueued = true
+	C_Timer.After(0, flushRefresh)
+end
+EventRegistry:RegisterCallback("Sentinel.ErrorCaptured", queueRefresh, CB_OWNER)
+EventRegistry:RegisterCallback("Sentinel.ErrorReceived", queueRefresh, CB_OWNER)

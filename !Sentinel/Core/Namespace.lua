@@ -1,7 +1,7 @@
 -- Sentinel: Namespace.lua
 -- The first file loaded. Creates the private shared namespace and shared constants.
--- Per the optimization guide, every other file does `local addonName, ns = ...`
--- to grab this same table reference -- no globals required.
+-- Every other file does `local addonName, ns = ...` to grab this same table
+-- reference, so nothing here needs a global.
 
 local addonName, ns = ...
 
@@ -20,6 +20,8 @@ ns.State = {
 	sessionId = -1,
 	paused = false,
 	hadNewErrorThisLoad = false,
+	-- Set when the error window (or auto-open) is deferred across combat.
+	reopenAfterCombat = false,
 }
 
 -----------------------------------------------------------------------
@@ -30,7 +32,7 @@ ns.DISPLAY_NAME = "Sentinel"
 ns.PREFIX = "Sentinel" -- addon comm prefix
 -- Version string straight from the .toc, so the UI never drifts out of sync.
 ns.VERSION = (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addonName, "Version")) or ""
--- Built-in Blizzard textures (guaranteed to exist -- no bundled media needed).
+-- Built-in game textures, always present, so no bundled media is needed.
 ns.ICON = "Interface\\COMMON\\Indicator-Green"
 ns.ICON_ALERT = "Interface\\COMMON\\Indicator-Red"
 
@@ -38,18 +40,18 @@ ns.ICON_ALERT = "Interface\\COMMON\\Indicator-Red"
 -- SavedVariables file never balloons (see optimization guide section 10).
 ns.MAX_ERRORS = 1000
 
--- If errors arrive faster than this per second, capture pauses to protect FPS
--- (see optimization guide section 1 -- addon CPU competes with frame rendering).
+-- If errors arrive faster than this per second, capture pauses to protect the
+-- frame rate, since addon CPU time competes with rendering.
 ns.ERRORS_PER_SEC_BEFORE_THROTTLE = 10
 
 ns.COLORS = {
-	chat = "|cff00bfff", -- Sentinel brand color -- electric blue (matches title counter + syntax)
+	chat = "|cff00bfff", -- Sentinel brand color, electric blue, matches the title counter and syntax
 	good = "|cff44ff44",
 	bad = "|cffff4411",
 	warn = "|cffffea00",
 }
 
--- Flat, modern dark theme (RGBA 0-1). The window fill is Material Dark (#121212);
+-- Flat, modern dark theme (RGBA 0-1). The window fill is Material Dark (#121212) and
 -- nested panes use Charcoal (#1A1A1A) so they layer cleanly, edged in Deep Cyan-Gray.
 ns.THEME = {
 	window = { 18 / 255, 18 / 255, 18 / 255, 0.97 }, -- #121212 Material Dark
@@ -57,10 +59,10 @@ ns.THEME = {
 	paneBorder = { 45 / 255, 64 / 255, 74 / 255, 1 }, -- #2D404A Deep Cyan-Gray
 }
 
--- Syntax-highlighting palette (cyan/silver, tuned for the #121212 pane).
--- Each entry keeps the final WoW color-code prefix cached in `.code`, avoiding
--- ColorMixin:GenerateHexColor() work during row/detail formatting (optimization
--- guide section 3), while still exposing GetRGB() for widget base text colors.
+-- Syntax-highlighting palette (cyan and silver, tuned for the #121212 pane).
+-- Each entry caches the final color-code prefix in `.code`, which avoids
+-- ColorMixin:GenerateHexColor() work during row and detail formatting
+-- (optimization section 3), while still exposing GetRGB() for widget base colors.
 local function makeSyntaxColor(hex, r, g, b)
 	local color = CreateColorFromHexString and CreateColorFromHexString(hex)
 	if not color then
@@ -80,22 +82,22 @@ local function makeSyntaxColor(hex, r, g, b)
 end
 
 ns.SYNTAX = {
-	counter = makeSyntaxColor("ff00bfff", 0, 191 / 255, 1), -- frequency badge (1x) -- electric blue
-	message = makeSyntaxColor("ffffffff", 1, 1, 1), -- headline error message -- crisp white
-	header = makeSyntaxColor("ff00bfff", 0, 191 / 255, 1), -- "Locals:" label -- electric blue (matches the counter)
-	path = makeSyntaxColor("ff4dd0e1", 77 / 255, 208 / 255, 225 / 255), -- file paths -- soft cyan
-	line = makeSyntaxColor("ff00ffff", 0, 1, 1), -- line numbers -- bright cyan
-	punct = makeSyntaxColor("ff607d8b", 96 / 255, 125 / 255, 139 / 255), -- punctuation (= : etc.) -- slate gray
-	varName = makeSyntaxColor("ff80deea", 128 / 255, 222 / 255, 234 / 255), -- locals names -- light aqua (subordinate to the electric-blue header)
-	string = makeSyntaxColor("ffcfd8dc", 207 / 255, 216 / 255, 220 / 255), -- string values -- light silver
-	number = makeSyntaxColor("ff00bfff", 0, 191 / 255, 1), -- numeric values -- electric blue
-	nilValue = makeSyntaxColor("ffff6b6b", 1, 107 / 255, 107 / 255), -- nil -- soft red (the "empty/problem" value pops)
-	keyword = makeSyntaxColor("ffffb74d", 1, 183 / 255, 77 / 255), -- true / false -- warm amber
-	stackText = makeSyntaxColor("ff90a4ae", 144 / 255, 164 / 255, 174 / 255), -- stack/function base -- blue-gray (below silver strings)
+	counter = makeSyntaxColor("ff00bfff", 0, 191 / 255, 1), -- frequency badge (1x), electric blue
+	message = makeSyntaxColor("ffffffff", 1, 1, 1), -- headline error message, crisp white
+	header = makeSyntaxColor("ff00bfff", 0, 191 / 255, 1), -- "Locals" label, electric blue like the counter
+	path = makeSyntaxColor("ff4dd0e1", 77 / 255, 208 / 255, 225 / 255), -- file paths, soft cyan
+	line = makeSyntaxColor("ff00ffff", 0, 1, 1), -- line numbers, bright cyan
+	punct = makeSyntaxColor("ff607d8b", 96 / 255, 125 / 255, 139 / 255), -- punctuation, slate gray
+	varName = makeSyntaxColor("ff80deea", 128 / 255, 222 / 255, 234 / 255), -- locals names, light aqua under the header
+	string = makeSyntaxColor("ffcfd8dc", 207 / 255, 216 / 255, 220 / 255), -- string values, light silver
+	number = makeSyntaxColor("ff00bfff", 0, 191 / 255, 1), -- numeric values, electric blue
+	nilValue = makeSyntaxColor("ffff6b6b", 1, 107 / 255, 107 / 255), -- nil, soft red so the empty value pops
+	keyword = makeSyntaxColor("ffffb74d", 1, 183 / 255, 77 / 255), -- true and false, warm amber
+	stackText = makeSyntaxColor("ff90a4ae", 144 / 255, 164 / 255, 174 / 255), -- stack base, blue-gray under the strings
 }
 
 -----------------------------------------------------------------------
--- Cached globals (used in hot paths -- see optimization guide section 3).
+-- Cached globals used in hot paths (optimization section 3).
 -- Each consumer file aliases these to file-scope locals at load time.
 -----------------------------------------------------------------------
 ns.G = {
@@ -110,7 +112,8 @@ ns.G = {
 	IsInInstance = IsInInstance,
 }
 
--- Midnight helpers (Peterodox-style: "is secret" vs "can tainted code use it").
+-- Midnight Secret Value helpers. IsSecret asks whether a value is secret at all,
+-- CanAccess asks whether tainted code is allowed to read it.
 function ns.IsSecret(v)
 	return v ~= nil and ns.G.issecretvalue(v)
 end
@@ -136,8 +139,8 @@ function ns.Print(...)
 end
 
 -----------------------------------------------------------------------
--- Public API table (the single intentional global, see optimization guide section 2)
--- Other addons / displays can read from the `Sentinel` global, but cannot overwrite it.
+-- Public API table, the single intentional global (optimization section 2).
+-- Other addons and displays can read the `Sentinel` global but cannot overwrite it.
 -----------------------------------------------------------------------
 ns.API = {}
 _G[ns.DISPLAY_NAME] = setmetatable({}, {

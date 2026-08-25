@@ -20,6 +20,25 @@ local function addCheckbox(varKey, name, tooltip, onChange)
 	return setting
 end
 
+-- A number-backed dropdown bound to DB.config, for the handful of non-boolean options.
+local function addDropdown(varKey, name, tooltip, labels, onChange)
+	local setting = Settings.RegisterAddOnSetting(category, "SENTINEL_" .. varKey:upper(), varKey, DB.config, Settings.VarType.Number, name, ns.DEFAULTS[varKey])
+	local function options()
+		local container = Settings.CreateControlTextContainer()
+		for i = 1, #labels do
+			container:Add(i, labels[i])
+		end
+		return container:GetData()
+	end
+	Settings.CreateDropdown(category, setting, options, tooltip)
+	if onChange then
+		setting:SetValueChangedCallback(function(_, value)
+			onChange(value)
+		end)
+	end
+	return setting
+end
+
 function Config.Initialize()
 	if category then
 		return
@@ -33,10 +52,21 @@ function Config.Initialize()
 		end
 	end)
 	addCheckbox("sound", L["Play a sound on new errors"], L["Plays a short sound (throttled) whenever a new, unique error is caught."])
-	addCheckbox("chat", L["Announce new errors in chat"], L["Prints a short notice to chat when a new error is caught."])
+	addCheckbox("chat", L["Announce new errors in chat"], L["Prints a short notice to chat when a new error is caught. Includes a clickable link to open that error."])
 	addCheckbox("autoOpen", L["Auto-open on error"], L["Automatically open the window when a new error is caught (never during combat)."])
+	addCheckbox("hideInCombat", L["Hide the window when entering combat"], L["Automatically hide the error window when you enter combat, then restore it when combat ends. Turn this off to let the window stay open through combat. Either way, you can always open or close it manually with Escape or the close button."])
 	addCheckbox("captureTaint", L["Capture blocked-action errors"], L["Capture ADDON_ACTION_FORBIDDEN and other blocked-action (taint) events. Turn off to ignore this taint noise from other addons entirely."])
 	addCheckbox("capturePaused", L["Pause error capture"], L["Temporarily stop recording new errors and warnings. Turn this on while a known issue is spamming, then turn it back off when you are ready to capture again."])
+	addDropdown("detailFontSize", L["Detail font size"], L["Font size for the stack trace and locals in the detail pane."], {
+		L["Small"],
+		L["Normal"],
+		L["Large"],
+		L["X-Large"],
+	}, function(value)
+		if ns.UI.SetDetailFontSize then
+			ns.UI.SetDetailFontSize(value)
+		end
+	end)
 
 	-- Wipe button
 	if CreateSettingsButtonInitializer then

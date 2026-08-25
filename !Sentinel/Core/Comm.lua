@@ -2,14 +2,13 @@
 -- Lets you send a caught error to another Sentinel user. Uses AceComm-3.0 for
 -- chunked, throttled transport and AceSerializer-3.0 for safe (de)serialization.
 --
--- Midnight note: addon messages are blocked entirely while inside an instance, so
--- we refuse to send there and point the user at Export instead (Secret Values guide).
+-- On Midnight, addon messages are blocked entirely while inside an instance, so we
+-- refuse to send there and point the user at Export instead.
 
 local _, ns = ...
 local Comm = ns.Comm
 local DB = ns.DB
 local L = ns.L
-local IsSecret = ns.IsSecret
 local GetTime = ns.G.GetTime
 local time = ns.G.time
 local floor = math.floor
@@ -56,6 +55,8 @@ local rateLimitWarned = {}
 
 -----------------------------------------------------------------------
 -- Build a serializable, Secret-free copy of an error.
+-- Capture already refuses to store Secret messages, but we still strip any stack or
+-- locals that might have been secret at grab time.
 -----------------------------------------------------------------------
 local function sanitize(err)
 	local copy = {}
@@ -72,8 +73,9 @@ local function wrapPayload(errors)
 end
 
 -- Accept v1 envelopes and legacy bare arrays from older Sentinel builds.
+-- Serialized output is never Secret, so there is no issecretvalue on the wire path.
 local function unwrapPayload(payload)
-	if type(payload) ~= "table" or IsSecret(payload) then
+	if type(payload) ~= "table" then
 		return nil
 	end
 	if payload.v == COMM_VERSION and type(payload.errors) == "table" then
@@ -133,7 +135,7 @@ function Comm.SendError(player, errorObject)
 end
 
 -----------------------------------------------------------------------
--- Send every error from a session (BugSack-style session dump).
+-- Send every error from a session.
 -----------------------------------------------------------------------
 function Comm.SendSession(player, sessionId)
 	if type(player) == "string" then
@@ -179,31 +181,33 @@ end
 -----------------------------------------------------------------------
 -- Receive
 -----------------------------------------------------------------------
--- Everything that arrives over the wire is untrusted: a malicious or buggy peer
+-- Everything that arrives over the wire is untrusted. A malicious or buggy peer
 -- could send an oversized payload, a flood of reports, or junk fields. We bound
 -- every dimension before anything touches our SavedVariables or the chat frame.
 
--- Truncate to a byte budget (returns nil for non-strings or secrets).
+-- Truncate to a byte budget. Returns nil for non-strings so optional fields drop.
+-- Deserialized wire data is plain Lua, with no Secret Values on the receive path.
 local function clip(s, max)
-	if type(s) ~= "string" or IsSecret(s) then
+	if type(s) ~= "string" then
 		return nil
 	end
 	if #s > max then
-		return s:sub(1, max) .. "..."
+		return ns.TrimPartialUTF8(s:sub(1, max)) .. "..."
 	end
 	return s
 end
 
--- Dedupe: a repeat of the same report from the same sender bumps the existing entry
--- instead of adding another row, mirroring the local capture path. Newest-first scan.
+-- Dedupe a repeat of the same report from the same sender by bumping the existing
+-- entry instead of adding another row, the way the local capture path does. This
+-- scans newest first.
 local function findReceived(message, sender)
-	if not message or IsSecret(message) then
+	if type(message) ~= "string" then
 		return nil
 	end
 	local errors = DB.GetAll()
 	for i = #errors, 1, -1 do
 		local e = errors[i]
-		if e.source == sender and type(e.message) == "string" and ns.NotSecret(e.message) and e.message == message then
+		if e.source == sender and e.message == message then
 			return e
 		end
 	end
@@ -213,12 +217,12 @@ local function onComm(prefix, message, _, sender)
 	if prefix ~= ns.PREFIX then
 		return
 	end
-	-- Bound the work *before* deserializing, so a huge blob can't burn memory/CPU.
-	if type(message) ~= "string" or IsSecret(message) or #message > MAX_PAYLOAD then
+	-- Bound the work before deserializing so a huge blob can't burn memory or CPU.
+	if type(message) ~= "string" or #message > MAX_PAYLOAD then
 		return
 	end
 	local ok, payload = transport:Deserialize(message)
-	if not ok or type(payload) ~= "table" or IsSecret(payload) then
+	if not ok or type(payload) ~= "table" then
 		return
 	end
 
@@ -238,7 +242,7 @@ local function onComm(prefix, message, _, sender)
 	end
 	for i = 1, n do
 		local e = errors[i]
-		if type(e) == "table" and type(e.message) == "string" and ns.NotSecret(e.message) then
+		if type(e) == "table" and type(e.message) == "string" then
 			local msg = clip(e.message, MAX_MSG_LEN)
 			if msg then
 				local existing = findReceived(msg, sender)
@@ -246,8 +250,8 @@ local function onComm(prefix, message, _, sender)
 					existing.counter = (existing.counter or 1) + 1
 					existing.time = time()
 				elseif canStoreFromSender(sender) then
-					-- Rebuild from only known fields (never store attacker-controlled
-					-- extras) and stamp with our own clock, not the sender's.
+					-- Rebuild from only the known fields so we never store attacker
+					-- controlled extras, and stamp with our own clock, not the sender's.
 					local counter = e.counter
 					if type(counter) ~= "number" or counter < 1 then
 						counter = 1
@@ -287,8 +291,7 @@ local function onComm(prefix, message, _, sender)
 		end
 		-- A received bug is someone else's, not a fresh local fault. Fire a distinct
 		-- event so the displays (window + minimap badge) refresh, but the local alert
-		-- pipeline (sound, "a new error was caught" chat, auto-open) stays silent --
-		-- matching the proven BugGrabber/BugSack split between "grabbed" and "received".
+		-- pipeline (sound, chat announce, auto-open) stays silent.
 		EventRegistry:TriggerEvent("Sentinel.ErrorReceived")
 	end
 end

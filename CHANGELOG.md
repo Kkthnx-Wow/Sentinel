@@ -4,13 +4,90 @@ All notable changes to **Sentinel** are documented here. This project follows
 [Semantic Versioning](https://semver.org/) and the spirit of
 [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.5.8] - 2026-08-25
+
+### Fixed
+
+- **Capture can no longer wedge itself.** The store and dedupe step now runs inside a
+  protected call, so a fault in Sentinel's own capture path clears the re-entrancy
+  guard instead of leaving it stuck and silently dropping every later error until a
+  reload.
+
+### Changed
+
+- **Cleaner locals.** The locals dump now skips functions and userdata, matching the
+  game's own error handler, so traces stay short and readable.
+- **Native non-printable escaping.** Sentinel now uses the client's
+  `C_StringUtil.EscapeDecimalNonPrintables` when it is present, which also repairs
+  invalid UTF-8 bytes, and keeps the Lua version as a fallback.
+- **UTF-8-safe trimming.** List rows and received wire strings trim on a character
+  boundary, so a cut message never leaves a broken glyph before the ellipsis.
+- **Repeat counter is capped** at 99999 so a long-lived spammy error cannot grow it
+  without bound.
+- **Interface bumped to 12.1.0** (120100).
+
+### Added
+
+- **Detail font size.** A new setting picks the stack and locals font size in the
+  detail pane, from Small to X-Large, so the trace is comfortable to read at any UI
+  scale.
+- **Hide on combat toggle.** A new setting hides the window when you enter combat and
+  restores it afterward. Either way, Escape and the close button now reliably close
+  the window during combat rather than leaving it stuck until combat ends.
+
+### Notes
+
+- Sentinel is now released under an All Rights Reserved license. Bundled libraries
+  under `Libs/` keep their own licenses.
+
+## [1.5.6] - 2026-07-17
+
+### Added
+
+- **Combat hide/restore**: if the error window (or export dialog) is open when you
+  enter combat, Sentinel hides it and reopens after combat. Auto-open during combat
+  also queues for regen, and `/sen` remains available mid-fight if you need it.
+  Also resyncs on `PLAYER_DEAD` / `PLAYER_ENTERING_WORLD` when regen can miss.
+- **Send session button**, dedicated control to whisper every error from this
+  session (Shift-click Send remains as a shortcut).
+- **Chat hyperlinks**, new-error chat announcements include a clickable
+  `|Haddon:sentinel:<id>|h` link that opens Sentinel on that error. Uses a
+  stable numeric `err.id` (survives `/reload`).
+- **GameEvent unregister**, when `GameEvent.UnregisterInternalEvent` exists
+  (12.1+), also detach `ADDON_ACTION_*` / `MACRO_ACTION_*` from GameEvent so
+  Blizzard’s blocked-action popups stay suppressed.
+
+### Changed
+
+- **Secret-value prune** (Resources 12.0.7 / docs-driven rules):
+  - Keep guards on `seterrorhandler` messages and stack/locals (Blizzard ScriptErrors
+    confirms these can be Secret).
+  - Drop over-guards on `LUA_WARNING` (untagged plain cstring) and AceComm receive /
+    AceSerializer payloads (wire data is never Secret).
+  - Capture stores `<secret stack>` / `<secret locals>` placeholders instead of
+    opaque values in SavedVariables.
+- Conventions note updated to match the keep/prune table.
+- Chat announcement setting text notes the clickable link.
+- Session-send UX no longer relies on Shift as the only discoverable path.
+- **Comment hygiene**, Lua comments describe Blizzard quirks and Sentinel intent, with no third-party addon name-drops.
+- **End-of-frame UI refresh coalesce**, error storms rebuild the open list once per
+  frame instead of once per capture.
+- **List row pool resetter**, clears `errorObject` on release so recycled rows
+  don’t retain stale refs.
+- **Bounded taint offender map**, wipe after 64 unique names so long sessions
+  can’t grow forever.
+- **Instance-combat tooltips**, row, action, and minimap tooltips no-op in
+  party/raid/PvP combat.
+- **Bottom bar layout**, widened the window and tightened button widths so
+  Send session and TaintLog no longer overlap.
+
 ## [1.5.5] - 2026-06-16
 
 ### Added
 
 - **Wipe confirmation** dialog before Clear, settings Wipe, Alt-click minimap wipe,
-  and `/sen clear` — prevents accidental total data loss.
-- **Comm protocol v1** (`{ v = 1, errors = {…} }`) with legacy bare-array receive
+  and `/sen clear`, prevents accidental total data loss.
+- **Comm protocol v1** (`{ v = 1, errors = {...} }`) with legacy bare-array receive
   support and a localized notice for unknown versions.
 - **Per-sender receive rate cap** (30 new stored reports per 60s) to limit
   SavedVariables growth from whisper spam.
@@ -31,7 +108,7 @@ All notable changes to **Sentinel** are documented here. This project follows
 
 - Search box refresh is **debounced** (150ms) to reduce list rebuild churn while
   typing.
-- `DB.GetBySession` / `DB.GetReceived` reuse scratch tables; main window list
+- `DB.GetBySession` / `DB.GetReceived` reuse scratch tables, and the main window list
   building avoids throwaway `{}` on every refresh.
 - Localized hardcoded English prints (missing-library comm fallback, `/sen test`).
 
@@ -53,13 +130,13 @@ All notable changes to **Sentinel** are documented here. This project follows
 
 ### Added
 
-- **Stack/locals refresh** on recurring errors idle for more than two minutes (from
-  !BugGrabber), so long-running intermittent bugs keep an up-to-date trace.
+- **Stack/locals refresh** on recurring errors idle for more than two minutes, so
+  long-running intermittent bugs keep an up-to-date trace.
 - **Session-wide send**: Shift+click **Send** (or the session send dialog) whispers
   every error from the current session to another Sentinel user, up to 50 per
   message. Receive cap raised to match.
-- **DB sanitation** on load strips corrupt rows where `message` was stored as a table
-  (BugGrabber `lastSanitation` pass).
+- **DB sanitation** on load strips corrupt rows where `message` was stored as a table,
+  tracked by a one-time `lastSanitation` flag so it only runs once.
 - **Locale overrides** for deDE, esES/esMX, frFR, koKR, ruRU, zhCN, zhTW, ptBR,
   and itIT (`Core/LocaleOverrides.lua`).
 
@@ -68,8 +145,8 @@ All notable changes to **Sentinel** are documented here. This project follows
 ### Added
 
 - **TaintLog** button on the error window footer (between Send and Delete). Left-click
-  cycles Blizzard's `taintLog` CVar (0–4); the label shows the current level
-  (`TaintLog: Off` or `TaintLog: 1` … `TaintLog: 4`). Debug output is written to
+  cycles Blizzard's `taintLog` CVar (0-4), and the label shows the current level
+  (`TaintLog: Off` or `TaintLog: 1` ... `TaintLog: 4`). Debug output is written to
   `taint.log` in your World of Warcraft folder. Also available via `/sen taintlog`
   and shown in `/sen status`. Hidden on clients without the CVar (Classic flavors).
 
@@ -99,7 +176,7 @@ All notable changes to **Sentinel** are documented here. This project follows
 ### Added
 
 - Selected-error deletion. A new `Delete` button removes only the currently
-  selected report, leaving the rest of your history intact; `Clear` remains the
+  selected report, leaving the rest of your history intact, and `Clear` remains the
   full wipe action.
 - Manual capture pause/resume. Use the new "Pause error capture" setting, `/sen
   pause`, or `/sen resume` when a known bad addon is spamming and you want
@@ -130,8 +207,8 @@ All notable changes to **Sentinel** are documented here. This project follows
   genuinely new, unique errors, matching the setting's own description. Previously
   the alert pipeline ran for every captured error, including repeats, so a single
   recurring error from another addon would replay the sound and re-print "A new
-  error was caught" every few seconds — and could re-open a window you had just
-  closed. Repeats still refresh the window and minimap count; they just no longer
+  error was caught" every few seconds, and could re-open a window you had just
+  closed. Repeats still refresh the window and minimap count, they just no longer
   re-alert.
 
 ## [1.4.0] - 2026-06-12
@@ -141,14 +218,14 @@ All notable changes to **Sentinel** are documented here. This project follows
 - Setting to ignore blocked-action (taint) errors. A new "Capture blocked-action
   errors" toggle (on by default) lets you opt out of `ADDON_ACTION_FORBIDDEN` /
   `ADDON_ACTION_BLOCKED` and the macro equivalents. When off, these are ignored at
-  capture time — no list entry, no sound/chat alert, no auto-open — so unfixable
+  capture time, no list entry, no sound/chat alert, no auto-open, so unfixable
   taint noise from other addons stays out of your way.
 
 ### Fixed
 
 - Fixed Copy/Export showing an empty box for some errors. When the captured stack
-  or locals contained WoW escape sequences — most often the Battle.net name token
-  (`|K…|k`) seen in friends-list errors, or inline textures (`|T…|t`) — they were
+  or locals contained WoW escape sequences, most often the Battle.net name token
+  (`|K...|k`) seen in friends-list errors, or inline textures (`|T...|t`), they were
   fed raw into the read-only EditBox, which renders blank on an escape it can't
   resolve. Copy/Export now neutralises those sequences (matching the pipe escaping
   the detail pane already used), so every error copies reliably.
@@ -166,7 +243,7 @@ All notable changes to **Sentinel** are documented here. This project follows
 - LibDataBroker-1.1 "data source" launcher. Sentinel now exposes an LDB object so
   broker display addons (Titan Panel, ChocolateBar, Bazooka, etc.) can surface the
   live error count, tooltip, and left/right/shift/alt click actions on a panel
-  instead of the minimap ring — useful when the minimap is already crowded. The
+  instead of the minimap ring, useful when the minimap is already crowded. The
   data source always registers and stays in sync even when the minimap button is
   hidden, and the library degrades gracefully if it ever fails to load.
 - Hover tooltips on every tab and action button. Each tab (All bugs, This
@@ -179,9 +256,9 @@ All notable changes to **Sentinel** are documented here. This project follows
 
 - Copy/Export now produces genuinely plain text. Captured data such as Blizzard
   POI/map field dumps embeds WoW colour escapes, which previously leaked into the
-  export box — rendering as colour on screen and pasting into Discord/pastebin as
-  raw colour-code garbage. Both the classic hex (`|cAARRGGBB…|r`) and the named
-  (`|cnCOLOR_NAME:…|r`) colour forms are now stripped, so shared reports are
+  export box, rendering as colour on screen and pasting into Discord/pastebin as
+  raw colour-code garbage. Both the classic hex (`|cAARRGGBB...|r`) and the named
+  (`|cnCOLOR_NAME:...|r`) colour forms are now stripped, so shared reports are
   clean. The colored detail pane is unaffected.
 
 ## [1.2.0] - 2026-06-09
@@ -197,14 +274,14 @@ All notable changes to **Sentinel** are documented here. This project follows
 - The selected tab is now clearly highlighted. Previously the active and resting
   tabs used nearly identical teal vertex tints, so the current view was almost
   impossible to tell apart. Each tab now draws Blizzard's
-  `auctionhouse-nav-button-secondary-select` atlas — purpose-built for
-  rectangular nav buttons — as a cyan highlight that shows only on the active
+  `auctionhouse-nav-button-secondary-select` atlas, purpose-built for
+  rectangular nav buttons, as a cyan highlight that shows only on the active
   tab and follows tab/search selection automatically.
 - Error-message identifiers now stand out. The offending symbol that Lua names in
   single quotes (e.g. `attempt to index local 'victim'`) is lifted into the same
   aqua used for local variable names, so the culprit pops against the white
   headline while the rest of the message stays crisp. This applies only to the
-  colored detail pane; copy/export plaintext is unchanged.
+  colored detail pane, and copy/export plaintext is unchanged.
 
 ## [1.1.0] - 2026-06-09
 
@@ -228,7 +305,7 @@ All notable changes to **Sentinel** are documented here. This project follows
 - The window now selects its default tab the very first time it is opened.
   Previously the tab was only chosen in the frame's `OnShow` handler, but a newly
   created frame is already shown, so the first `UI.Open()` call to `Show()` was a
-  no-op that never fired `OnShow` — leaving the list with no active tab until the
+  no-op that never fired `OnShow`, leaving the list with no active tab until the
   window was closed and reopened. The frame is now hidden once at build time so
   the first open is a real hidden-to-shown transition.
 - Receiving a shared error from another player no longer behaves like a fresh
@@ -236,12 +313,12 @@ All notable changes to **Sentinel** are documented here. This project follows
   played the alert sound, printed "A new error was caught," and could auto-open
   the window. Received bugs now fire a distinct `Sentinel.ErrorReceived` event
   that only refreshes the window and minimap badge, while the alert pipeline
-  stays reserved for genuine local errors (mirroring BugGrabber/BugSack's split
-  between grabbed and received reports).
+  stays reserved for genuine local errors, keeping grabbed and received reports
+  cleanly separated.
 
 ## [1.0.0] - 2026-06-09
 
-The first public release of Sentinel — a modern, Secret-Value-safe Lua error
+The first public release of Sentinel, a modern, Secret-Value-safe Lua error
 watcher for the Midnight-era WoW client.
 
 ### Added
@@ -276,7 +353,7 @@ watcher for the Midnight-era WoW client.
 - Send a caught error to another Sentinel user over a chunked, throttled addon
   channel (AceComm-3.0 + AceSerializer-3.0).
 - Received bugs are tagged with the sender's name and flagged with a `*`.
-- Secret values are stripped before sending; sharing is blocked inside instances
+- Secret values are stripped before sending, and sharing is blocked inside instances
   (where Midnight disallows addon messages) with a prompt to use Export instead.
 
 **Access & settings**

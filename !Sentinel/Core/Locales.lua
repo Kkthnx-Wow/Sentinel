@@ -1,5 +1,5 @@
 -- Sentinel: Locales.lua
--- Localization table. Defaults to enUS; falls back to the key itself for any
+-- Localization table. Defaults to enUS and falls back to the key itself for any
 -- missing entry via the metatable, so the UI never shows nil.
 
 local _, ns = ...
@@ -14,7 +14,7 @@ ns.L = L
 
 -- enUS (default)
 L["Sentinel"] = "Sentinel"
-L["No errors caught \226\128\148 your UI is clean."] = "No errors caught \226\128\148 your UI is clean."
+L["No errors caught, your UI is clean."] = "No errors caught, your UI is clean."
 L["All bugs"] = "All bugs"
 L["This session"] = "This session"
 L["Previous session"] = "Previous session"
@@ -22,6 +22,7 @@ L["Received"] = "Received"
 L["Copy"] = "Copy"
 L["Export"] = "Export"
 L["Send"] = "Send"
+L["Send session"] = "Send session"
 L["Delete"] = "Delete"
 L["Clear"] = "Clear"
 L["Reload UI"] = "Reload UI"
@@ -34,9 +35,11 @@ L["Errors caught during your previous play session."] = "Errors caught during yo
 L["Error reports other players have sent to you with Sentinel."] = "Error reports other players have sent to you with Sentinel."
 
 -- Action button tooltips
-L["Copies the one error selected on the left. Opens a text box \226\128\148 select all and press Ctrl-C."] = "Copies the one error selected on the left. Opens a text box \226\128\148 select all and press Ctrl-C."
-L["Exports every error in the current tab at once. Opens a text box \226\128\148 select all and press Ctrl-C."] = "Exports every error in the current tab at once. Opens a text box \226\128\148 select all and press Ctrl-C."
+L["Copies the one error selected on the left. Opens a text box, select all and press Ctrl-C."] = "Copies the one error selected on the left. Opens a text box, select all and press Ctrl-C."
+L["Exports every error in the current tab at once. Opens a text box, select all and press Ctrl-C."] = "Exports every error in the current tab at once. Opens a text box, select all and press Ctrl-C."
 L["Send the selected error to another Sentinel user. Unavailable inside instances."] = "Send the selected error to another Sentinel user. Unavailable inside instances."
+L["Send every error from this session to another Sentinel user. Unavailable inside instances."] = "Send every error from this session to another Sentinel user. Unavailable inside instances."
+L["Shortcut: Shift-click Send also sends the whole session."] = "Shortcut: Shift-click Send also sends the whole session."
 L["Shift-click Send to whisper every error from this session instead."] = "Shift-click Send to whisper every error from this session instead."
 L["Send all errors from this session (%d) to a player."] = "Send all errors from this session (%d) to a player."
 L["Sent %d errors to %s."] = "Sent %d errors to %s."
@@ -44,7 +47,7 @@ L["Sending %d of %d session errors (message size limit)."] = "Sending %d of %d s
 L["No errors in this session to send."] = "No errors in this session to send."
 L["You received %d error reports from %s."] = "You received %d error reports from %s."
 L["Permanently delete only the selected error."] = "Permanently delete only the selected error."
-L["Reload your interface \226\128\148 handy after disabling a broken addon."] = "Reload your interface \226\128\148 handy after disabling a broken addon."
+L["Reload your interface, handy after disabling a broken addon."] = "Reload your interface, handy after disabling a broken addon."
 
 -- Error row tooltip
 L["Occurrences"] = "Occurrences"
@@ -55,6 +58,8 @@ L["Click to view full details."] = "Click to view full details."
 
 -- Alerts
 L["A new error was caught. Type /sentinel to view it."] = "A new error was caught. Type /sentinel to view it."
+L["A new error was caught: %s"] = "A new error was caught: %s"
+L["That error is no longer stored."] = "That error is no longer stored."
 L["Capture paused: too many errors per second. Fix or disable the failing addon."] = "Capture paused: too many errors per second. Fix or disable the failing addon."
 L["[%s] AddOn '%s' tried to call the protected function '%s'."] = "[%s] AddOn '%s' tried to call the protected function '%s'."
 L["Macro tried to call the protected function '%s'."] = "Macro tried to call the protected function '%s'."
@@ -76,13 +81,21 @@ L["Toggle the Sentinel button next to the minimap."] = "Toggle the Sentinel butt
 L["Play a sound on new errors"] = "Play a sound on new errors"
 L["Plays a short sound (throttled) whenever a new, unique error is caught."] = "Plays a short sound (throttled) whenever a new, unique error is caught."
 L["Announce new errors in chat"] = "Announce new errors in chat"
-L["Prints a short notice to chat when a new error is caught."] = "Prints a short notice to chat when a new error is caught."
+L["Prints a short notice to chat when a new error is caught. Includes a clickable link to open that error."] = "Prints a short notice to chat when a new error is caught. Includes a clickable link to open that error."
 L["Auto-open on error"] = "Auto-open on error"
 L["Automatically open the window when a new error is caught (never during combat)."] = "Automatically open the window when a new error is caught (never during combat)."
+L["Hide the window when entering combat"] = "Hide the window when entering combat"
+L["Automatically hide the error window when you enter combat, then restore it when combat ends. Turn this off to let the window stay open through combat. Either way, you can always open or close it manually with Escape or the close button."] = "Automatically hide the error window when you enter combat, then restore it when combat ends. Turn this off to let the window stay open through combat. Either way, you can always open or close it manually with Escape or the close button."
 L["Capture blocked-action errors"] = "Capture blocked-action errors"
 L["Capture ADDON_ACTION_FORBIDDEN and other blocked-action (taint) events. Turn off to ignore this taint noise from other addons entirely."] = "Capture ADDON_ACTION_FORBIDDEN and other blocked-action (taint) events. Turn off to ignore this taint noise from other addons entirely."
 L["Pause error capture"] = "Pause error capture"
 L["Temporarily stop recording new errors and warnings. Turn this on while a known issue is spamming, then turn it back off when you are ready to capture again."] = "Temporarily stop recording new errors and warnings. Turn this on while a known issue is spamming, then turn it back off when you are ready to capture again."
+L["Detail font size"] = "Detail font size"
+L["Font size for the stack trace and locals in the detail pane."] = "Font size for the stack trace and locals in the detail pane."
+L["Small"] = "Small"
+L["Normal"] = "Normal"
+L["Large"] = "Large"
+L["X-Large"] = "X-Large"
 L["Wipe all stored errors"] = "Wipe all stored errors"
 L["Permanently delete every stored error from every session."] = "Permanently delete every stored error from every session."
 L["All stored errors have been wiped."] = "All stored errors have been wiped."

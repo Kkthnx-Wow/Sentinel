@@ -1,10 +1,11 @@
 -- Sentinel: MinimapButton.lua
--- A self-contained minimap button (no LibDBIcon needed) plus a LibDataBroker-1.1
--- "data source" launcher. Shows a live error count, supports dragging around the
--- minimap, a rich tooltip, and the modern Addon Compartment.
+-- A self-contained minimap button that needs no icon library, plus a
+-- LibDataBroker-1.1 "data source" launcher. Shows a live error count, supports
+-- dragging around the minimap, a rich tooltip, and the modern Addon Compartment.
 --
--- Positioning follows LibDBIcon-1.0 (minimap shape quads + half-width radius) so
--- the tracking ring sits on the orbit outside the minimap disc, not on top of it.
+-- Positioning uses the standard minimap-shape quadrant table and a half-width
+-- radius, so the tracking ring sits on the orbit outside the minimap disc rather
+-- than on top of it.
 
 local _, ns = ...
 local DB = ns.DB
@@ -27,18 +28,18 @@ local button
 local iconNormal = ns.ICON
 local iconAlert = ns.ICON_ALERT
 
--- Indicator-Green/Red ship with generous transparent padding; crop so the orb
--- reads clearly inside the tracking ring.
+-- The indicator textures ship with generous transparent padding, so crop them and
+-- the orb reads clearly inside the tracking ring.
 local ICON_TEXCOORD = { 0.16, 0.84, 0.16, 0.84 }
 
 local isMainline = WOW_PROJECT_ID == WOW_PROJECT_MAINLINE
-local BUTTON_RADIUS = 5 -- extra pixels past the minimap edge (LibDBIcon default)
+local BUTTON_RADIUS = 5 -- extra pixels past the minimap edge
 
 local LDB = LibStub and LibStub("LibDataBroker-1.1", true)
 local dataObject
 
 -----------------------------------------------------------------------
--- Position on the minimap ring (LibDBIcon-1.0 updatePosition)
+-- Position on the minimap ring
 -----------------------------------------------------------------------
 local minimapShapes = {
 	["ROUND"] = { true, true, true, true },
@@ -126,12 +127,19 @@ ns.UI.UpdateMinimapCount = updateCount
 -- Tooltip
 -----------------------------------------------------------------------
 local function onTooltip(self)
+	-- Skip in instance combat, where tooltip APIs can trip secret or taint noise.
+	if InCombatLockdown() then
+		local _, instanceType = IsInInstance()
+		if instanceType == "raid" or instanceType == "party" or instanceType == "pvp" or instanceType == "arena" then
+			return
+		end
+	end
 	GameTooltip:SetOwner(self, "ANCHOR_LEFT")
 	GameTooltip:AddLine(ns.DISPLAY_NAME, ns.SYNTAX.counter:GetRGB())
 	local errs = DB.GetBySession(DB.GetSessionId())
 	local n = #errs
 	if n == 0 then
-		GameTooltip:AddLine(L["No errors caught \226\128\148 your UI is clean."], 0.6, 0.6, 0.6, true)
+		GameTooltip:AddLine(L["No errors caught, your UI is clean."], 0.6, 0.6, 0.6, true)
 	else
 		for i = n, math.max(1, n - 7), -1 do
 			local e = errs[i]

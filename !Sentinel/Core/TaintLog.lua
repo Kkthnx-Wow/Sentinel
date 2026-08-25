@@ -1,6 +1,6 @@
 -- Sentinel: TaintLog.lua
--- Thin wrapper around Blizzard's `taintLog` CVar (12.0+). Levels 0–4 write
--- debug output to taint.log in the WoW install folder (see Resources/CVars.lua).
+-- Thin wrapper around the `taintLog` CVar (12.0 and later). Levels 0 to 4 write
+-- debug output to taint.log in the WoW install folder.
 
 local _, ns = ...
 local L = ns.L
