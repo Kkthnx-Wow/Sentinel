@@ -4,7 +4,7 @@ All notable changes to **Sentinel** are documented here. This project follows
 [Semantic Versioning](https://semver.org/) and the spirit of
 [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [1.6.0] - 2026-10-25
 
 ### Fixed
 
