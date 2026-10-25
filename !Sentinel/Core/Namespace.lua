@@ -19,6 +19,7 @@ ns.State = {
 	initialized = false,
 	sessionId = -1,
 	paused = false,
+	-- A new error was captured and no alert has announced it yet.
 	hadNewErrorThisLoad = false,
 	-- Set when the error window (or auto-open) is deferred across combat.
 	reopenAfterCombat = false,

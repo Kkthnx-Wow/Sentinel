@@ -64,6 +64,9 @@ end
 -- between grabbed and received reports.
 local function onErrorCaptured(_, errorObject, isNew)
 	if isNew then
+		-- This error is announced right now, so the PLAYER_LOGIN catch-up below must not
+		-- announce the same load a second time.
+		ns.State.hadNewErrorThisLoad = false
 		runAlerts(errorObject)
 	end
 end
@@ -103,7 +106,7 @@ SLASH_SENTINEL2 = "/sen"
 local function fireTestError()
 	local sentinelTestLocal = "this is a test local captured by Sentinel"
 	C_Timer.After(0, function()
-		local victim = nil
+		local victim = nil -- luacheck: ignore 241
 		-- Deliberate nil index -> raises "attempt to index a nil value".
 		---@diagnostic disable-next-line: need-check-nil, undefined-field, inject-field
 		victim.thisIsAFakeSentinelTestError = sentinelTestLocal
@@ -249,8 +252,8 @@ function handlers.PLAYER_LOGIN()
 	if UI.UpdateMinimapCount then
 		UI.UpdateMinimapCount()
 	end
-	-- Alert only when a genuinely new error was captured during load (not a deduped
-	-- repeat moved into this session from a prior one).
+	-- Catch-up for errors captured before the alert callback above was registered
+	-- (Sentinel's own load). Genuinely new only, not a deduped repeat from a prior session.
 	if ns.State.hadNewErrorThisLoad then
 		runAlerts()
 	end

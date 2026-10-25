@@ -4,7 +4,8 @@
 -- Copy / Export / Send / TaintLog / Delete / Clear / Reload actions.
 --
 -- Built lazily (only created the first time it is opened) and entirely from stable
--- widget APIs. List rows come from a frame pool (optimization guide sections 5 & 7).
+-- widget APIs. The list is virtualized, only the rows in view exist as frames, so a
+-- full 1000-error store costs the same to draw as a handful.
 
 local _, ns = ...
 local UI = ns.UI
@@ -14,8 +15,15 @@ local Format = ns.Format
 local Comm = ns.Comm
 local TaintLog = ns.TaintLog
 
+local floor = math.floor
+
 local ROW_HEIGHT = 18
 local SEARCH_DEBOUNCE = 0.15
+-- Fallback list viewport height until the scroll frame has been laid out.
+local LIST_VIEW_HEIGHT = 358
+-- Exports past this many characters drop the oldest errors. A multi-megabyte string in
+-- an EditBox freezes the client for seconds.
+local EXPORT_MAX_CHARS = 200000
 
 -- Skip tooltips in instance combat, where frame APIs can trip secret or taint noise.
 local function shouldSuppressTooltip()
@@ -37,7 +45,7 @@ local ROW_FORMAT = ns.SYNTAX.counter.code .. "%dx|r %s"
 
 -- Window-scoped widgets (filled in by Build()).
 local window, listScroll, listChild, detailScroll, detailChild, detailText, countText, searchBox, listEmpty
-local rowPool
+local rows = {}
 local tabButtons = {}
 local taintBtn
 
@@ -210,11 +218,36 @@ end
 -----------------------------------------------------------------------
 -- Detail pane
 -----------------------------------------------------------------------
+-- What the pane is currently showing. Formatting a stack is the expensive part of a
+-- refresh, so the pane re-renders only when the error, its repeat count, the font or the
+-- wrap width changed. Starts dirty so the first call draws the placeholder.
+local shownError, shownCounter
+local detailDirty = true
+
+local function scrollDetailToTop()
+	-- With ScrollFrameTemplate the thin scrollbar drives the position, so nudge its
+	-- value too (guarded, since the field/method only exist on the modern template)
+	-- and keep the direct SetVerticalScroll as a fallback for the actual content offset.
+	local bar = detailScroll.ScrollBar
+	if bar and bar.SetScrollPercentage then
+		bar:SetScrollPercentage(0)
+	end
+	detailScroll:SetVerticalScroll(0)
+end
+
 local function updateDetail()
 	if not detailText then
 		return
 	end
 	local err = state.selected
+	local counter = err and (err.counter or 1)
+	if not detailDirty and err == shownError and counter == shownCounter then
+		return
+	end
+	-- A repeat of the error you are reading must not yank the scroll back to the top.
+	local sameError = err ~= nil and err == shownError
+	shownError, shownCounter, detailDirty = err, counter, false
+
 	local text
 	if err then
 		text = Format.FormatError(err)
@@ -224,18 +257,9 @@ local function updateDetail()
 	detailText:SetText(text)
 	-- Resize the scroll child height so the scrollbar reflects the full formatted
 	-- body. Width is owned by the scroll frame's OnSizeChanged, so leave it alone.
-	local height = detailText:GetStringHeight()
-	detailChild:SetHeight(math.max(height + 4, 1))
-	if detailScroll then
-		-- Snap back to the top when switching errors. With ScrollFrameTemplate the
-		-- thin scrollbar drives the position, so nudge its value too (guarded, since
-		-- the field/method only exist on the modern template) and keep the direct
-		-- SetVerticalScroll as a fallback for the actual content offset.
-		local bar = detailScroll.ScrollBar
-		if bar and bar.SetScrollPercentage then
-			bar:SetScrollPercentage(0)
-		end
-		detailScroll:SetVerticalScroll(0)
+	detailChild:SetHeight(math.max(detailText:GetStringHeight() + 4, 1))
+	if detailScroll and not sameError then
+		scrollDetailToTop()
 	end
 end
 
@@ -254,6 +278,7 @@ local function applyDetailFont()
 		detailText:SetFont(file, size, flags)
 		detailText:SetTextColor(ns.SYNTAX.stackText:GetRGB())
 	end
+	detailDirty = true
 	updateDetail()
 end
 
@@ -267,7 +292,7 @@ end
 -----------------------------------------------------------------------
 local function onRowClick(row)
 	state.selected = row.errorObject
-	UI.RefreshRows()
+	UI.UpdateRowSelection()
 	updateDetail()
 end
 
@@ -298,82 +323,151 @@ local function onRowEnter(row)
 	GameTooltip:Show()
 end
 
-local function resetRow(_, row)
+local function createRow(slot)
+	local row = CreateFrame("Button", nil, listChild)
+	row:SetHeight(ROW_HEIGHT)
+	row:RegisterForClicks("LeftButtonUp")
+
+	local hl = row:CreateTexture(nil, "HIGHLIGHT")
+	hl:SetAllPoints()
+	hl:SetAtlas("groupfinder-button-highlight")
+	hl:SetDesaturated(true)
+	hl:SetVertexColor(ns.SYNTAX.counter:GetRGB())
+	hl:SetBlendMode("ADD")
+
+	row.sel = row:CreateTexture(nil, "BACKGROUND")
+	row.sel:SetAllPoints()
+	row.sel:SetAtlas("groupfinder-highlightbar-green")
+	row.sel:SetDesaturation(1)
+	row.sel:SetBlendMode("ADD")
+	row.sel:Hide()
+
+	row.text = row:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+	row.text:SetPoint("LEFT", 4, 0)
+	row.text:SetPoint("RIGHT", -4, 0)
+	row.text:SetJustifyH("LEFT")
+	row.text:SetWordWrap(false)
+
+	row:SetScript("OnClick", onRowClick)
+	row:SetScript("OnEnter", onRowEnter)
+	row:SetScript("OnLeave", GameTooltip_Hide)
 	row:Hide()
-	row:ClearAllPoints()
-	row.errorObject = nil
-	if row.sel then
-		row.sel:Hide()
+	rows[slot] = row
+	return row
+end
+
+local layoutPass = 0
+local suppressLayout = false
+
+-- Jump the list back to the top. The caller refreshes right after, so the scroll
+-- hook skips its own redraw of a list that is about to be replaced.
+local function resetListScroll()
+	suppressLayout = true
+	listScroll:SetVerticalScroll(0)
+	suppressLayout = false
+end
+
+-- Draws the slice of the list that is in view, newest first. A row is tied to its
+-- list position (slot = position modulo pool size), so scrolling by one row rebinds
+-- one frame instead of all of them, and a row only reformats when its error or repeat
+-- count changed.
+local function layoutRows()
+	if suppressLayout or not listScroll or not listChild then
+		return
 	end
-	if row.text then
-		row.text:SetText("")
+	local list = state.list
+	local n = #list
+	local poolSize = math.ceil((listScroll:GetHeight() or 0) / ROW_HEIGHT)
+	if poolSize < 1 then
+		poolSize = math.ceil(LIST_VIEW_HEIGHT / ROW_HEIGHT)
+	end
+	poolSize = poolSize + 1 -- one partly-visible row at the bottom edge
+	for slot = #rows + 1, poolSize do
+		createRow(slot)
+	end
+
+	layoutPass = layoutPass + 1
+	local firstIndex = floor(listScroll:GetVerticalScroll() / ROW_HEIGHT) + 1
+	local lastIndex = math.min(firstIndex + poolSize - 1, n)
+	local selected = state.selected
+	for index = firstIndex, lastIndex do
+		local err = list[n - index + 1]
+		local row = rows[(index - 1) % poolSize + 1]
+		row.pass = layoutPass
+		local count = err.counter or 1
+		if row.errorObject ~= err or row.shownCount ~= count then
+			row.errorObject = err
+			row.shownCount = count
+			local label = Format.ShortMessage(err)
+			if err.source then
+				label = "|cffff8800*|r " .. label
+			end
+			row.text:SetText(ROW_FORMAT:format(count, label))
+		end
+		if row.shownIndex ~= index then
+			row.shownIndex = index
+			row:ClearAllPoints()
+			row:SetPoint("TOPLEFT", listChild, "TOPLEFT", 0, -(index - 1) * ROW_HEIGHT)
+			row:SetPoint("TOPRIGHT", listChild, "TOPRIGHT", 0, -(index - 1) * ROW_HEIGHT)
+		end
+		row.sel:SetShown(err == selected)
+		row:Show()
+	end
+
+	-- Hide every pooled row that has no list position this pass.
+	for slot = 1, #rows do
+		local row = rows[slot]
+		if row.pass ~= layoutPass and row.errorObject then
+			row.errorObject = nil
+			row.shownIndex = nil
+			row:Hide()
+		end
 	end
 end
 
-local function acquireRow()
-	local row = rowPool:Acquire()
-	if not row.initialized then
-		row.initialized = true
-		row:SetHeight(ROW_HEIGHT)
-		row:SetWidth(256)
-		row:RegisterForClicks("LeftButtonUp")
-
-		local hl = row:CreateTexture(nil, "HIGHLIGHT")
-		hl:SetAllPoints()
-		hl:SetAtlas("groupfinder-button-highlight")
-		hl:SetDesaturated(true)
-		hl:SetVertexColor(ns.SYNTAX.counter:GetRGB())
-		hl:SetBlendMode("ADD")
-
-		row.sel = row:CreateTexture(nil, "BACKGROUND")
-		row.sel:SetAllPoints()
-		row.sel:SetAtlas("groupfinder-highlightbar-green")
-		row.sel:SetDesaturation(1)
-		row.sel:SetBlendMode("ADD")
-		row.sel:Hide()
-
-		row.text = row:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
-		row.text:SetPoint("LEFT", 4, 0)
-		row.text:SetPoint("RIGHT", -4, 0)
-		row.text:SetJustifyH("LEFT")
-		row.text:SetWordWrap(false)
-
-		row:SetScript("OnClick", onRowClick)
-		row:SetScript("OnEnter", onRowEnter)
-		row:SetScript("OnLeave", GameTooltip_Hide)
+-- Cheap path for a selection change, no reformatting.
+function UI.UpdateRowSelection()
+	local selected = state.selected
+	for slot = 1, #rows do
+		local row = rows[slot]
+		if row.errorObject then
+			row.sel:SetShown(row.errorObject == selected)
+		end
 	end
-	return row
 end
 
 function UI.RefreshRows()
 	if not listChild then
 		return
 	end
-	rowPool:ReleaseAll()
-
-	local list = state.list
-	local n = #list
-	for i = 1, n do
-		-- Show newest first.
-		local err = list[n - i + 1]
-		local row = acquireRow()
-		row.errorObject = err
-		local count = err.counter or 1
-		local label = Format.ShortMessage(err)
-		if err.source then
-			label = "|cffff8800*|r " .. label
-		end
-		row.text:SetText(ROW_FORMAT:format(count, label))
-		row.sel:SetShown(err == state.selected)
-		row:SetPoint("TOPLEFT", listChild, "TOPLEFT", 0, -(i - 1) * ROW_HEIGHT)
-		row:SetPoint("TOPRIGHT", listChild, "TOPRIGHT", 0, -(i - 1) * ROW_HEIGHT)
-		row:Show()
-	end
-
+	local n = #state.list
 	listChild:SetHeight(math.max(n * ROW_HEIGHT, 1))
+	layoutRows()
 	countText:SetText((ns.SYNTAX.counter.code .. "%d|r"):format(n))
 	if listEmpty then
 		listEmpty:SetShown(n == 0)
+	end
+end
+
+-- Bring a list entry into view, used when a chat link opens a specific error.
+local function scrollListToError(err)
+	local list = state.list
+	local n = #list
+	for position = n, 1, -1 do
+		if list[position] == err then
+			local index = n - position + 1
+			local top = (index - 1) * ROW_HEIGHT
+			-- The child height was just set, so refresh the scroll range before clamping to it.
+			listScroll:UpdateScrollChildRect()
+			local viewHeight = listScroll:GetHeight() or LIST_VIEW_HEIGHT
+			local offset = listScroll:GetVerticalScroll()
+			if top < offset then
+				listScroll:SetVerticalScroll(top)
+			elseif top + ROW_HEIGHT > offset + viewHeight then
+				listScroll:SetVerticalScroll(top + ROW_HEIGHT - viewHeight)
+			end
+			return
+		end
 	end
 end
 
@@ -415,6 +509,7 @@ local function selectTab(tab)
 		b.isActive = (b.tab == tab)
 		applyButtonColors(b)
 	end
+	resetListScroll()
 	UI.Refresh()
 end
 
@@ -422,6 +517,31 @@ end
 -- Export / Copy dialog (reusable read-only text box)
 -----------------------------------------------------------------------
 local exportFrame
+-- Plain text for a list of errors, oldest first. Past EXPORT_MAX_CHARS the oldest
+-- errors are left out, since a huge string freezes the EditBox.
+local function buildExportText(list)
+	wipe(exportParts)
+	local total = #list
+	local used, kept = 0, 0
+	for i = total, 1, -1 do
+		local part = Format.PlainError(list[i])
+		used = used + #part
+		if kept > 0 and used > EXPORT_MAX_CHARS then
+			break
+		end
+		kept = kept + 1
+		exportParts[kept] = part
+	end
+	-- Parts were gathered newest first, flip them back to reading order.
+	for i = 1, floor(kept / 2) do
+		exportParts[i], exportParts[kept + 1 - i] = exportParts[kept + 1 - i], exportParts[i]
+	end
+	if kept < total then
+		ns.Print(L["Export limited to the newest %d of %d errors."]:format(kept, total))
+	end
+	return table.concat(exportParts, "\n\n" .. ("-"):rep(40) .. "\n\n", 1, kept)
+end
+
 local function showExport(text)
 	if not exportFrame then
 		exportFrame = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
@@ -479,6 +599,9 @@ end
 -- Send dialog
 -----------------------------------------------------------------------
 local function getStaticPopupEditBox(popup)
+	if popup.GetEditBox then
+		return popup:GetEditBox()
+	end
 	return popup.EditBox or popup.editBox
 end
 
@@ -494,6 +617,16 @@ end
 
 function UI.ConfirmWipe()
 	StaticPopup_Show("SENTINEL_CONFIRM_WIPE")
+end
+
+-- The popup text shows how many errors are about to go out, not the session id.
+function UI.PromptSendSession()
+	local count = DB.SessionCount()
+	if count == 0 then
+		ns.Print(L["No errors in this session to send."])
+	else
+		StaticPopup_Show("SENTINEL_SEND_SESSION", count)
+	end
 end
 
 StaticPopupDialogs["SENTINEL_CONFIRM_WIPE"] = {
@@ -729,6 +862,7 @@ local function Build()
 				b.isActive = false
 				applyButtonColors(b)
 			end
+			resetListScroll()
 			scheduleSearchRefresh()
 		elseif state.tab == "search" then
 			selectTab("session")
@@ -756,13 +890,17 @@ local function Build()
 	listChild = CreateFrame("Frame", nil, listScroll)
 	listChild:SetSize(262, 1)
 	listScroll:SetScrollChild(listChild)
+	-- Only the rows in view exist, so every scroll or range change redraws that slice.
+	listScroll:HookScript("OnVerticalScroll", layoutRows)
+	listScroll:HookScript("OnScrollRangeChanged", layoutRows)
+	if listScroll.SetPanExtent then
+		listScroll:SetPanExtent(ROW_HEIGHT * 3)
+	end
 
 	listEmpty = listInset:CreateFontString(nil, "ARTWORK", "GameFontDisableLarge")
 	listEmpty:SetPoint("CENTER", 0, 20)
 	listEmpty:SetWidth(240)
 	listEmpty:SetText(L["No errors caught, your UI is clean."])
-
-	rowPool = CreateFramePool("Button", listChild, nil, resetRow)
 
 	-- Right pane, the detail view inside a flat charcoal pane
 	local detailInset = makePane(window)
@@ -795,6 +933,7 @@ local function Build()
 		if width and width > 0 then
 			detailChild:SetWidth(width)
 			-- Reflow the wrapped height for the new width.
+			detailDirty = true
 			updateDetail()
 		end
 	end)
@@ -810,11 +949,7 @@ local function Build()
 	copyBtn:SetPoint("BOTTOMLEFT", 16, 14)
 
 	local exportBtn = makeActionButton(window, L["Export"], 90, function()
-		wipe(exportParts)
-		for i = 1, #state.list do
-			exportParts[i] = Format.PlainError(state.list[i])
-		end
-		showExport(table.concat(exportParts, "\n\n" .. ("-"):rep(40) .. "\n\n"))
+		showExport(buildExportText(state.list))
 	end, L["Exports every error in the current tab at once. Opens a text box, select all and press Ctrl-C."])
 	exportBtn:SetPoint("LEFT", copyBtn, "RIGHT", 6, 0)
 
@@ -822,11 +957,7 @@ local function Build()
 		local sendBtn = makeActionButton(window, L["Send"], 90, function()
 			if IsShiftKeyDown() then
 				-- Power-user shortcut. The primary path is the Send session button.
-				if DB.SessionCount() == 0 then
-					ns.Print(L["No errors in this session to send."])
-				else
-					StaticPopup_Show("SENTINEL_SEND_SESSION", DB.GetSessionId())
-				end
+				UI.PromptSendSession()
 			elseif state.selected then
 				StaticPopup_Show("SENTINEL_SEND")
 			else
@@ -837,13 +968,7 @@ local function Build()
 			.. L["Shortcut: Shift-click Send also sends the whole session."])
 		sendBtn:SetPoint("LEFT", exportBtn, "RIGHT", 6, 0)
 
-		local sessionBtn = makeActionButton(window, L["Send session"], 100, function()
-			if DB.SessionCount() == 0 then
-				ns.Print(L["No errors in this session to send."])
-			else
-				StaticPopup_Show("SENTINEL_SEND_SESSION", DB.GetSessionId())
-			end
-		end, L["Send every error from this session to another Sentinel user. Unavailable inside instances."])
+		local sessionBtn = makeActionButton(window, L["Send session"], 100, UI.PromptSendSession, L["Send every error from this session to another Sentinel user. Unavailable inside instances."])
 		sessionBtn:SetPoint("LEFT", sendBtn, "RIGHT", 6, 0)
 	end
 
@@ -888,7 +1013,12 @@ local function Build()
 		local pending = ns.State.pendingError
 		ns.State.pendingError = nil
 		if pending then
-			local tab = (pending.session == DB.GetSessionId()) and "session" or "all"
+			local tab = "all"
+			if pending.source then
+				tab = "received"
+			elseif pending.session == DB.GetSessionId() then
+				tab = "session"
+			end
 			state.tab = tab
 			if tab ~= "search" then
 				searchBox:SetText("")
@@ -898,7 +1028,9 @@ local function Build()
 				applyButtonColors(b)
 			end
 			state.selected = pending
+			resetListScroll()
 			UI.Refresh()
+			scrollListToError(pending)
 		else
 			-- Smart default on every open, show This session (most relevant to what you're
 			-- doing now). If this session is clean but older bugs exist, fall back to All

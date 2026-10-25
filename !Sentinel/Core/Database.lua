@@ -57,16 +57,16 @@ do
 
 	migrate(sv)
 
-	-- Drop corrupt rows where legacy grabbers stored a table as the message field.
-	if type(sv.lastSanitation) ~= "number" or sv.lastSanitation < 1 then
+	-- Drop rows that are not tables or have no string message. A hand-edited or
+	-- half-written SavedVariables file would otherwise fault every list scan.
+	do
 		local errors = sv.errors
 		for i = #errors, 1, -1 do
 			local e = errors[i]
-			if type(e) ~= "table" or type(e.message) == "table" then
+			if type(e) ~= "table" or type(e.message) ~= "string" then
 				table.remove(errors, i)
 			end
 		end
-		sv.lastSanitation = 1
 	end
 
 	-- Begin a fresh session for this login/reload.
@@ -122,16 +122,20 @@ end
 local sessionScratch = {}
 local receivedScratch = {}
 
--- Returns an array of errors belonging to `sessionId`. Reuses `out` when provided
--- (wipe + refill) to avoid throwaway tables in UI refresh paths.
+-- Returns an array of locally caught errors belonging to `sessionId`. Reports
+-- received from other players carry `source` and live in GetReceived instead, so they
+-- never inflate the session tab, the minimap badge, or a session you send out.
+-- Reuses `out` when provided (wipe + refill) to avoid throwaway tables in UI refresh paths.
 function DB.GetBySession(sessionId, out)
 	out = out or sessionScratch
 	wipe(out)
 	local errors = DB.errors
+	local n = 0
 	for i = 1, #errors do
 		local e = errors[i]
-		if e.session == sessionId then
-			out[#out + 1] = e
+		if e.session == sessionId and not e.source then
+			n = n + 1
+			out[n] = e
 		end
 	end
 	return out
@@ -142,22 +146,26 @@ function DB.GetReceived(out)
 	out = out or receivedScratch
 	wipe(out)
 	local errors = DB.errors
+	local n = 0
 	for i = 1, #errors do
 		local e = errors[i]
 		if e.source then
-			out[#out + 1] = e
+			n = n + 1
+			out[n] = e
 		end
 	end
 	return out
 end
 
--- Linear scan from newest to oldest. The error list is small in practice, so
--- this is cheaper than maintaining a parallel hash.
+-- Finds a locally caught error by message, newest first. Received reports are
+-- skipped, otherwise a local fault that matches a peer's report would be folded into
+-- that row and show up under Received instead of This session. The list is capped
+-- at MAX_ERRORS, so a scan beats maintaining a parallel hash.
 function DB.FetchByMessage(message)
 	local errors = DB.errors
 	for i = #errors, 1, -1 do
 		local e = errors[i]
-		if e.message == message then
+		if e.message == message and not e.source then
 			return e, i
 		end
 	end
@@ -177,6 +185,18 @@ function DB.GetById(id)
 	end
 end
 
+-- Over the cap, the oldest received report goes first, so a peer flooding reports
+-- can never push your own errors out of the list. With none left it is plain oldest-first.
+local function evictOne(errors)
+	for i = 1, #errors do
+		if errors[i].source then
+			table.remove(errors, i)
+			return
+		end
+	end
+	table.remove(errors, 1)
+end
+
 function DB.Store(errorObject)
 	if type(errorObject.id) ~= "number" then
 		local nextId = DB.nextErrorId or 1
@@ -189,8 +209,8 @@ function DB.Store(errorObject)
 	end
 	local errors = DB.errors
 	errors[#errors + 1] = errorObject
-	if #errors > ns.MAX_ERRORS then
-		table.remove(errors, 1)
+	while #errors > ns.MAX_ERRORS do
+		evictOne(errors)
 	end
 end
 
@@ -222,7 +242,8 @@ function DB.SessionCount()
 	local errors = DB.errors
 	local session = ns.State.sessionId
 	for i = 1, #errors do
-		if errors[i].session == session then
+		local e = errors[i]
+		if e.session == session and not e.source then
 			n = n + 1
 		end
 	end

@@ -131,8 +131,9 @@ local function storeError(errorMessage, isSimple, session)
 				errorObject.stack, errorObject.locals = captureStackLocals()
 			end
 		else
-			local elapsed = time() - errorObject.time
-			errorObject.time = time()
+			local now = time()
+			local elapsed = now - (errorObject.time or 0)
+			errorObject.time = now
 			if elapsed > 10 then
 				DB.Remove(index)
 				DB.Store(errorObject)

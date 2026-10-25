@@ -14,7 +14,6 @@ local L = ns.L
 
 local Minimap = Minimap
 local CreateFrame = CreateFrame
-local GetMinimapShape = GetMinimapShape
 local math_rad = math.rad
 local math_deg = math.deg
 local math_cos = math.cos
@@ -79,7 +78,10 @@ local function updatePosition()
 	if y > 0 then
 		q = q + 2
 	end
-	local minimapShape = (GetMinimapShape and GetMinimapShape()) or "ROUND"
+	-- Read at call time. Minimap addons define GetMinimapShape after we load, so a
+	-- load-time local would be nil and a square minimap would get a round orbit.
+	local getShape = _G.GetMinimapShape
+	local minimapShape = (getShape and getShape()) or "ROUND"
 	local quadTable = minimapShapes[minimapShape] or minimapShapes["ROUND"]
 	local w = (Minimap:GetWidth() / 2) + BUTTON_RADIUS
 	local h = (Minimap:GetHeight() / 2) + BUTTON_RADIUS
@@ -107,9 +109,16 @@ end
 -----------------------------------------------------------------------
 -- Visuals
 -----------------------------------------------------------------------
+-- Last applied label, so a burst of repeats doesn't re-set the same texture and text.
+local appliedText
+
 local function updateCount()
 	local count = DB.SessionCount()
 	local countText = count > 0 and (count > 99 and "*" or tostring(count)) or ""
+	if countText == appliedText then
+		return
+	end
+	appliedText = countText
 	local icon = count > 0 and iconAlert or iconNormal
 	if button then
 		button.count:SetText(countText)
@@ -243,6 +252,8 @@ local function Build()
 	end)
 
 	updatePosition()
+	-- Errors captured before login never reached a widget, so force the first paint.
+	appliedText = nil
 	updateCount()
 
 	if not DB.config.minimap then

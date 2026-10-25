@@ -4,6 +4,50 @@ All notable changes to **Sentinel** are documented here. This project follows
 [Semantic Versioning](https://semver.org/) and the spirit of
 [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Fixed
+
+- **Received reports no longer pose as your own errors.** Reports sent to you by other
+  players stay in the Received tab. They no longer inflate This session, the minimap
+  badge or a session you send, and a local error that matches a received message now
+  gets its own row instead of being folded into the peer's.
+- **The detail pane keeps its place.** A repeat of the error you are reading used to
+  snap the scroll back to the top. It now only jumps to the top when you pick a
+  different error.
+- **Large sessions arrive.** Sends over the receiver's 64KB limit were dropped whole.
+  Sessions now go out in size-limited messages, long text is clipped to the same
+  limits the receiver enforces, and an oversized session sends its newest 50 errors
+  instead of its oldest.
+- **Rate limit matches the protocol.** A full 50 error message used to hit the 30 per
+  minute receive cap. The window now allows 120, and the "received" count only counts
+  reports that were actually stored or merged.
+- **Square minimaps.** The button orbit now follows the minimap shape reported by
+  minimap addons, which load after Sentinel and were never seen before.
+- **Session send prompt** showed the session id where it meant the error count.
+- **Double announcement at login.** An error already announced while addons loaded was
+  announced a second time on PLAYER_LOGIN.
+- **Chat link to a received report** opens on the Received tab and scrolls the list to it.
+
+### Changed
+
+- **Virtualized error list.** Only the rows in view exist as frames, and a row
+  reformats only when its error or repeat count changes. A full 1000 error store draws
+  as fast as a handful, and selecting a row no longer rebuilds the list.
+- **Export is capped** at about 200,000 characters, keeping the newest errors in
+  reading order and saying so in chat. A multi-megabyte string froze the text box.
+- **A peer flooding reports cannot push out your errors.** At the 1000 error cap the
+  oldest received report is dropped before any local error.
+- **Cleaner store on load.** Rows that are not tables or have no string message are
+  dropped every load, not just once.
+- **Per-sender receive state is pruned**, so one-off senders do not leave entries behind.
+- **Interface bumped to 12.1.5** (120105).
+
+### Added
+
+- **Headless tests and a check script.** `scripts/check.ps1` runs the syntax pass,
+  luacheck and tests for capture, the database, sharing and the main window.
+
 ## [1.5.8] - 2026-08-25
 
 ### Fixed

@@ -39,7 +39,8 @@ AceSerializer:Embed(transport)
 -- Protocol version (v1 wraps errors in { v = 1, errors = { ... } }).
 local COMM_VERSION = 1
 
--- Inbound/outbound caps (receive path treats peer data as untrusted).
+-- Inbound/outbound caps (receive path treats peer data as untrusted). The send path
+-- clips to the same limits, so what we send is always something we would accept.
 local MAX_PAYLOAD = 64 * 1024
 local MAX_ERRORS_PER_MESSAGE = 50
 local MAX_MSG_LEN = 2000
@@ -47,11 +48,46 @@ local MAX_BLOCK_LEN = 8000
 local MAX_COUNTER = 99999
 local RECV_NOTICE_THROTTLE = 5
 local RECV_RATE_WINDOW = 60
-local RECV_RATE_MAX = 30
+-- One full message of reports must fit inside the window, with room for a second.
+local RECV_RATE_MAX = 120
+local RECV_RATE_PRUNE_SIZE = 64
+
+-- Serialization escapes some bytes, so a batch stays well under the receiver's
+-- MAX_PAYLOAD instead of aiming right at it.
+local SEND_BATCH_BUDGET = 30 * 1024
+local SEND_ENTRY_OVERHEAD = 64
 
 local lastRecvNotice = 0
 local senderRecvRate = {}
+local senderRecvRateCount = 0
 local rateLimitWarned = {}
+
+-----------------------------------------------------------------------
+-- Shared helpers
+-----------------------------------------------------------------------
+-- Truncate to a byte budget. Returns nil for non-strings so optional fields drop.
+-- Deserialized wire data is plain Lua, with no Secret Values on the receive path.
+local function clip(s, max)
+	if type(s) ~= "string" then
+		return nil
+	end
+	if #s > max then
+		return ns.TrimPartialUTF8(s:sub(1, max)) .. "..."
+	end
+	return s
+end
+
+-- Trims a typed player name. Returns nil when nothing usable is left.
+local function normalizePlayerName(player)
+	if type(player) ~= "string" then
+		return nil
+	end
+	player = player:match("^%s*(.-)%s*$")
+	if player == "" then
+		return nil
+	end
+	return player
+end
 
 -----------------------------------------------------------------------
 -- Build a serializable, Secret-free copy of an error.
@@ -60,9 +96,9 @@ local rateLimitWarned = {}
 -----------------------------------------------------------------------
 local function sanitize(err)
 	local copy = {}
-	copy.message = ns.NotSecret(err.message) and err.message or "<secret error>"
-	copy.stack = (err.stack and ns.NotSecret(err.stack)) and err.stack or nil
-	copy.locals = (err.locals and ns.NotSecret(err.locals)) and err.locals or nil
+	copy.message = (ns.NotSecret(err.message) and clip(err.message, MAX_MSG_LEN)) or "<secret error>"
+	copy.stack = (err.stack and ns.NotSecret(err.stack)) and clip(err.stack, MAX_BLOCK_LEN) or nil
+	copy.locals = (err.locals and ns.NotSecret(err.locals)) and clip(err.locals, MAX_BLOCK_LEN) or nil
 	copy.counter = err.counter
 	copy.time = err.time
 	return copy
@@ -90,12 +126,31 @@ local function unwrapPayload(payload)
 	return nil
 end
 
+-- Per-sender store budget. The table is bounded by dropping expired windows once it
+-- grows, so a long session of one-off senders cannot leak entries.
+local function pruneSenderRates(now)
+	for sender, entry in pairs(senderRecvRate) do
+		if now - entry.start >= RECV_RATE_WINDOW then
+			senderRecvRate[sender] = nil
+			rateLimitWarned[sender] = nil
+			senderRecvRateCount = senderRecvRateCount - 1
+		end
+	end
+end
+
 local function canStoreFromSender(sender)
 	local now = time()
 	local entry = senderRecvRate[sender]
 	if not entry or now - entry.start >= RECV_RATE_WINDOW then
-		senderRecvRate[sender] = { start = now, count = 0 }
-		entry = senderRecvRate[sender]
+		if not entry then
+			if senderRecvRateCount >= RECV_RATE_PRUNE_SIZE then
+				pruneSenderRates(now)
+			end
+			senderRecvRateCount = senderRecvRateCount + 1
+		end
+		entry = { start = now, count = 0 }
+		senderRecvRate[sender] = entry
+		rateLimitWarned[sender] = nil
 	end
 	return entry.count < RECV_RATE_MAX
 end
@@ -110,13 +165,38 @@ end
 -----------------------------------------------------------------------
 -- Send
 -----------------------------------------------------------------------
+local function entryWeight(entry)
+	return #entry.message + (entry.stack and #entry.stack or 0) + (entry.locals and #entry.locals or 0) + SEND_ENTRY_OVERHEAD
+end
+
+local function sendBatch(player, batch)
+	transport:SendCommMessage(ns.PREFIX, transport:Serialize(wrapPayload(batch)), "WHISPER", player, "BULK")
+end
+
+-- Sends sanitized entries in as many messages as the size budget needs. One oversized
+-- message would be dropped whole by the receiver, so large sessions go out in pieces.
+local function sendEntries(player, entries)
+	local batch, size = {}, 0
+	for i = 1, #entries do
+		local entry = entries[i]
+		local weight = entryWeight(entry)
+		if #batch > 0 and (size + weight > SEND_BATCH_BUDGET or #batch >= MAX_ERRORS_PER_MESSAGE) then
+			sendBatch(player, batch)
+			batch, size = {}, 0
+		end
+		batch[#batch + 1] = entry
+		size = size + weight
+	end
+	if #batch > 0 then
+		sendBatch(player, batch)
+	end
+end
+
 function Comm.SendError(player, errorObject)
 	-- Trim surrounding whitespace so a stray space from the input box can't make
 	-- the whisper miss its target.
-	if type(player) == "string" then
-		player = player:gsub("^%s+", ""):gsub("%s+$", "")
-	end
-	if type(player) ~= "string" or player == "" then
+	player = normalizePlayerName(player)
+	if not player then
 		ns.Print(L["Enter a valid player name."])
 		return
 	end
@@ -129,8 +209,7 @@ function Comm.SendError(player, errorObject)
 		return
 	end
 
-	local payload = transport:Serialize(wrapPayload({ sanitize(errorObject) }))
-	transport:SendCommMessage(ns.PREFIX, payload, "WHISPER", player, "BULK")
+	sendEntries(player, { sanitize(errorObject) })
 	ns.Print(L["Sent error to %s."]:format(player))
 end
 
@@ -138,10 +217,8 @@ end
 -- Send every error from a session.
 -----------------------------------------------------------------------
 function Comm.SendSession(player, sessionId)
-	if type(player) == "string" then
-		player = player:gsub("^%s+", ""):gsub("%s+$", "")
-	end
-	if type(player) ~= "string" or player == "" then
+	player = normalizePlayerName(player)
+	if not player then
 		ns.Print(L["Enter a valid player name."])
 		return
 	end
@@ -158,19 +235,21 @@ function Comm.SendSession(player, sessionId)
 		return
 	end
 
+	-- Keep the newest errors when the session is over the cap, they are the ones the
+	-- player is most likely still chasing.
 	local sendCount = total
 	if sendCount > MAX_ERRORS_PER_MESSAGE then
 		sendCount = MAX_ERRORS_PER_MESSAGE
 		ns.Print(L["Sending %d of %d session errors (message size limit)."]:format(sendCount, total))
 	end
 
-	local payloadErrors = {}
+	local entries = {}
+	local first = total - sendCount
 	for i = 1, sendCount do
-		payloadErrors[i] = sanitize(errors[i])
+		entries[i] = sanitize(errors[first + i])
 	end
 
-	local payload = transport:Serialize(wrapPayload(payloadErrors))
-	transport:SendCommMessage(ns.PREFIX, payload, "WHISPER", player, "BULK")
+	sendEntries(player, entries)
 	if sendCount == 1 then
 		ns.Print(L["Sent error to %s."]:format(player))
 	else
@@ -185,25 +264,10 @@ end
 -- could send an oversized payload, a flood of reports, or junk fields. We bound
 -- every dimension before anything touches our SavedVariables or the chat frame.
 
--- Truncate to a byte budget. Returns nil for non-strings so optional fields drop.
--- Deserialized wire data is plain Lua, with no Secret Values on the receive path.
-local function clip(s, max)
-	if type(s) ~= "string" then
-		return nil
-	end
-	if #s > max then
-		return ns.TrimPartialUTF8(s:sub(1, max)) .. "..."
-	end
-	return s
-end
-
 -- Dedupe a repeat of the same report from the same sender by bumping the existing
 -- entry instead of adding another row, the way the local capture path does. This
 -- scans newest first.
 local function findReceived(message, sender)
-	if type(message) ~= "string" then
-		return nil
-	end
 	local errors = DB.GetAll()
 	for i = #errors, 1, -1 do
 		local e = errors[i]
@@ -211,6 +275,53 @@ local function findReceived(message, sender)
 			return e
 		end
 	end
+end
+
+-- Stores or merges one wire entry. Returns true when it changed the list.
+local function acceptEntry(e, sender, session)
+	if type(e) ~= "table" then
+		return false
+	end
+	local msg = clip(e.message, MAX_MSG_LEN)
+	if not msg then
+		return false
+	end
+
+	local existing = findReceived(msg, sender)
+	if existing then
+		local counter = (existing.counter or 1) + 1
+		existing.counter = counter > MAX_COUNTER and MAX_COUNTER or counter
+		existing.time = time()
+		return true
+	end
+
+	if not canStoreFromSender(sender) then
+		if not rateLimitWarned[sender] then
+			rateLimitWarned[sender] = true
+			ns.Print(L["Too many error reports from %s. Further reports ignored for now."]:format(sender))
+		end
+		return false
+	end
+
+	-- Rebuild from only the known fields so we never store attacker controlled
+	-- extras, and stamp with our own clock, not the sender's.
+	local counter = e.counter
+	if type(counter) ~= "number" or counter < 1 then
+		counter = 1
+	elseif counter > MAX_COUNTER then
+		counter = MAX_COUNTER
+	end
+	DB.Store({
+		message = msg,
+		stack = clip(e.stack, MAX_BLOCK_LEN),
+		locals = clip(e.locals, MAX_BLOCK_LEN),
+		counter = floor(counter),
+		time = time(),
+		session = session,
+		source = sender,
+	})
+	noteStoredFromSender(sender)
+	return true
 end
 
 local function onComm(prefix, message, _, sender)
@@ -241,39 +352,8 @@ local function onComm(prefix, message, _, sender)
 		n = MAX_ERRORS_PER_MESSAGE
 	end
 	for i = 1, n do
-		local e = errors[i]
-		if type(e) == "table" and type(e.message) == "string" then
-			local msg = clip(e.message, MAX_MSG_LEN)
-			if msg then
-				local existing = findReceived(msg, sender)
-				if existing then
-					existing.counter = (existing.counter or 1) + 1
-					existing.time = time()
-				elseif canStoreFromSender(sender) then
-					-- Rebuild from only the known fields so we never store attacker
-					-- controlled extras, and stamp with our own clock, not the sender's.
-					local counter = e.counter
-					if type(counter) ~= "number" or counter < 1 then
-						counter = 1
-					elseif counter > MAX_COUNTER then
-						counter = MAX_COUNTER
-					end
-					DB.Store({
-						message = msg,
-						stack = clip(e.stack, MAX_BLOCK_LEN),
-						locals = clip(e.locals, MAX_BLOCK_LEN),
-						counter = floor(counter),
-						time = time(),
-						session = session,
-						source = sender,
-					})
-					noteStoredFromSender(sender)
-				elseif not rateLimitWarned[sender] then
-					rateLimitWarned[sender] = true
-					ns.Print(L["Too many error reports from %s. Further reports ignored for now."]:format(sender))
-				end
-				received = received + 1
-			end
+		if acceptEntry(errors[i], sender, session) then
+			received = received + 1
 		end
 	end
 
@@ -297,3 +377,6 @@ local function onComm(prefix, message, _, sender)
 end
 
 transport:RegisterComm(ns.PREFIX, onComm)
+
+-- Test seam, headless tests call the receive handler directly.
+Comm._onComm = onComm

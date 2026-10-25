@@ -66,6 +66,7 @@ L["Macro tried to call the protected function '%s'."] = "Macro tried to call the
 
 -- Sharing
 L["Select the text below, then press Ctrl-C to copy."] = "Select the text below, then press Ctrl-C to copy."
+L["Export limited to the newest %d of %d errors."] = "Export limited to the newest %d of %d errors."
 L["Send the currently selected error to a player."] = "Send the currently selected error to a player."
 L["Sent error to %s."] = "Sent error to %s."
 L["You received an error report from %s."] = "You received an error report from %s."
