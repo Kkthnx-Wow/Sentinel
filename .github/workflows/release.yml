@@ -60,16 +60,20 @@ jobs:
             lua5.1 "$test"
           done
 
+      # -n names the zip Sentinel-<version>.zip. The default would use the
+      # folder name and start the file name with the "!".
       - name: Package and release
         if: github.event_name == 'push'
         uses: BigWigsMods/packager@v2
+        with:
+          args: -n "Sentinel-{project-version}"
 
       # -d skips every upload, so this only proves the zip builds.
       - name: Package only (dry run)
         if: github.event_name == 'workflow_dispatch'
         uses: BigWigsMods/packager@v2
         with:
-          args: -d
+          args: -d -n "Sentinel-{project-version}"
 
       - name: Keep the dry run zip
         if: github.event_name == 'workflow_dispatch'
