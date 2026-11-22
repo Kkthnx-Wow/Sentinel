@@ -21,8 +21,9 @@ All notable changes to **Sentinel** are documented here. This project follows
 - **Clearer stack and locals.** Addon frames show their folder in gold while game and
   engine frames are dimmed. Nested locals keep their indentation, and widgets, secret
   values and engine temporaries each get their own colour.
-- **Retail TOC.** Interface 120105 is listed again next to the Forever and Classic
-  numbers.
+- **Retail and Forever only.** The TOC lists Interface 120105 (Retail) and 16001
+  (Forever). The Classic Era, Anniversary and Mists Classic numbers are dropped, so
+  those clients mark Sentinel out of date.
 
 ### Fixed
 
