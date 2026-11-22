@@ -32,7 +32,7 @@ ns.ADDON_NAME = addonName
 ns.DISPLAY_NAME = "Sentinel"
 ns.PREFIX = "Sentinel" -- addon comm prefix
 -- Version string straight from the .toc, so the UI never drifts out of sync.
--- C_AddOns is the modern accessor; a client without it still exposes the older global.
+-- C_AddOns is the modern accessor, and a client without it still exposes the older global.
 -- Without this fallback the title bar would render a bare "v" on those clients.
 local versionFromCAddOns = C_AddOns and C_AddOns.GetAddOnMetadata
 local versionFromGlobal = GetAddOnMetadata

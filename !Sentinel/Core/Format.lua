@@ -80,7 +80,7 @@ ns.TrimPartialUTF8 = trimPartialUTF8
 
 -- debuglocals caps its output and can stop in the middle of a child entry, leaving a
 -- dangling frame reference such as "75=MotionSicknessFrame <MotionSicknes". Only that
--- unmistakable shape is removed; complete lines are left alone. Returns the trimmed
+-- unmistakable shape is removed, and complete lines are left alone. Returns the trimmed
 -- text and whether anything was cut, so callers can choose the marker's styling.
 local function TrimLocalsTail(s)
 	if type(s) ~= "string" or s == "" then

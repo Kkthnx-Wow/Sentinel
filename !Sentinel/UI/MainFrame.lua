@@ -628,8 +628,8 @@ local function showExport(text)
 
 		local hint = exportFrame:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
 		hint:SetPoint("BOTTOMLEFT", title, "BOTTOMRIGHT", 5, 0)
-		-- This is the only instruction for copying the report, so keep it readable;
-		-- the decorative version tag on the main window can stay muted.
+		-- This is the only instruction for copying the report, so keep it readable. The
+		-- decorative version tag on the main window can stay muted.
 		hint:SetTextColor(0.55, 0.55, 0.58)
 		hint:SetText(L["Select the text below, then press Ctrl-C to copy."])
 

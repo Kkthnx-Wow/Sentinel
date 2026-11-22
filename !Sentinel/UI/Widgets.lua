@@ -291,7 +291,7 @@ end
 -- Scroll frame with a thin scrollbar
 -----------------------------------------------------------------------
 -- A plain ScrollFrame plus a Slider. The slider's own thumb texture is invisible and
--- only sizes the hit area; the three-piece thumb art is anchored to it, so dragging and
+-- only sizes the hit area. The three-piece thumb art is anchored to it, so dragging and
 -- track clicks use the slider's native behaviour.
 local THUMB_MIN = 23
 local BAR_WIDTH = 8

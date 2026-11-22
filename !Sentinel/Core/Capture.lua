@@ -223,7 +223,7 @@ local function captureError(errorMessage, isSimple)
 	-- The message can be a Secret Value, and tainted code may not read or tostring it.
 	-- Replace it with a readable placeholder instead of bailing: the error is still
 	-- counted, listed and alerted, and the stack captured below can still name the
-	-- culprit addon. This is the addon's only Secret boundary; everything stored from
+	-- culprit addon. This is the addon's only Secret boundary, and everything stored from
 	-- here on is a plain string.
 	if errorMessage ~= nil and issecretvalue(errorMessage) then
 		errorMessage = "<secret error message>"
