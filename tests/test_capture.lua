@@ -93,4 +93,55 @@ T.case("a fault inside the store step does not wedge later captures", function()
 	eq(ns.DB.Count(), 1, "second error stored")
 end)
 
+T.case("without an error height the trace still starts at the faulting function", function()
+	local env = T.newEnv()
+	-- Real stack measurements from the Lua debug library. Height counts the caller's
+	-- frames, and debugstack(1) is the function that called debugstack.
+	_G.GetCallstackHeight = function()
+		local n = 0
+		while debug.getinfo(n + 2, "l") do
+			n = n + 1
+		end
+		return n
+	end
+	_G.GetErrorCallstackHeight = function()
+		return nil
+	end
+	_G.debugstack = function(level)
+		local info = debug.getinfo(level + 1, "Sl")
+		return info and (info.short_src .. ":" .. info.currentline) or "none"
+	end
+	local ns = {}
+	T.loadBase(ns)
+	T.load(ns, "Core/Capture.lua")
+	local faultLine
+	local function faultSite()
+		faultLine = debug.getinfo(1, "l").currentline + 1
+		env.handler("boom")
+	end
+	faultSite()
+	local stack = ns.DB.errors[1].stack
+	eq(stack:match("test_capture%.lua:(%d+)$"), tostring(faultLine), "stack starts at the fault, not inside the capture path: " .. stack)
+end)
+
+T.case("oversized stack and locals are capped on whole lines", function()
+	local env = T.newEnv()
+	local line = ("x"):rep(99) .. "\n"
+	_G.debugstack = function()
+		return line:rep(500)
+	end
+	_G.debuglocals = function()
+		return ("y"):rep(20000)
+	end
+	local ns = {}
+	T.loadBase(ns)
+	T.load(ns, "Core/Capture.lua")
+	env.handler("big")
+	local e = ns.DB.errors[1]
+	assert(#e.stack <= 8004, "stack capped: " .. #e.stack)
+	eq(e.stack:sub(-4), "\n...", "marker")
+	eq((#e.stack - 4) % 100, 99, "cut on a line break")
+	assert(#e.locals <= 8004, "locals capped: " .. #e.locals)
+end)
+
 T.finish()

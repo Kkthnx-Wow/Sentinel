@@ -32,10 +32,18 @@ ns.ADDON_NAME = addonName
 ns.DISPLAY_NAME = "Sentinel"
 ns.PREFIX = "Sentinel" -- addon comm prefix
 -- Version string straight from the .toc, so the UI never drifts out of sync.
-ns.VERSION = (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addonName, "Version")) or ""
--- Built-in game textures, always present, so no bundled media is needed.
-ns.ICON = "Interface\\COMMON\\Indicator-Green"
-ns.ICON_ALERT = "Interface\\COMMON\\Indicator-Red"
+-- C_AddOns is the modern accessor; a client without it still exposes the older global.
+-- Without this fallback the title bar would render a bare "v" on those clients.
+local versionFromCAddOns = C_AddOns and C_AddOns.GetAddOnMetadata
+local versionFromGlobal = GetAddOnMetadata
+ns.VERSION = (versionFromCAddOns and versionFromCAddOns(addonName, "Version"))
+	or (versionFromGlobal and versionFromGlobal(addonName, "Version"))
+	or ""
+-- Bundled media. The addon owns its icons and minimap button art, so it never depends
+-- on built-in Indicator-* paths or magic texture fileIDs that can move between patches.
+ns.MEDIA = "Interface\\AddOns\\" .. addonName .. "\\Media\\"
+ns.ICON = ns.MEDIA .. "Indicator-Green.tga"
+ns.ICON_ALERT = ns.MEDIA .. "Indicator-Red.tga"
 
 -- Keep at most this many stored errors. Beyond this the oldest are dropped so the
 -- SavedVariables file never balloons (see optimization guide section 10).
@@ -95,6 +103,11 @@ ns.SYNTAX = {
 	nilValue = makeSyntaxColor("ffff6b6b", 1, 107 / 255, 107 / 255), -- nil, soft red so the empty value pops
 	keyword = makeSyntaxColor("ffffb74d", 1, 183 / 255, 77 / 255), -- true and false, warm amber
 	stackText = makeSyntaxColor("ff90a4ae", 144 / 255, 164 / 255, 174 / 255), -- stack base, blue-gray under the strings
+	addon = makeSyntaxColor("ffffd180", 1, 209 / 255, 128 / 255), -- addon folder in a stack frame, soft gold so the owner stands out
+	dim = makeSyntaxColor("ff788893", 120 / 255, 136 / 255, 147 / 255), -- game and engine frames, pushed back but still about 4.8:1 on the pane
+	funcName = makeSyntaxColor("ffe0e0e0", 224 / 255, 224 / 255, 224 / 255), -- named functions in a stack frame
+	secret = makeSyntaxColor("ffce93d8", 206 / 255, 147 / 255, 216 / 255), -- <secret ...> placeholders, lavender
+	typeName = makeSyntaxColor("ff81c784", 129 / 255, 199 / 255, 132 / 255), -- widget and table references in locals, soft green
 }
 
 -----------------------------------------------------------------------
@@ -102,34 +115,16 @@ ns.SYNTAX = {
 -- Each consumer file aliases these to file-scope locals at load time.
 -----------------------------------------------------------------------
 ns.G = {
+	-- The one Secret Value primitive the addon needs. Midnight wraps values tainted code
+	-- may not read, and the capture boundary uses this to turn them into plain text
+	-- before they are stored. Older clients get the always-false fallback.
 	issecretvalue = _G.issecretvalue or function()
 		return false
-	end,
-	canaccessvalue = _G.canaccessvalue or function()
-		return true
 	end,
 	GetTime = GetTime,
 	time = time,
 	IsInInstance = IsInInstance,
 }
-
--- Midnight Secret Value helpers. IsSecret asks whether a value is secret at all,
--- CanAccess asks whether tainted code is allowed to read it.
-function ns.IsSecret(v)
-	return v ~= nil and ns.G.issecretvalue(v)
-end
-
-function ns.NotSecret(v)
-	return v == nil or not ns.G.issecretvalue(v)
-end
-
-function ns.CanAccess(v)
-	return v ~= nil and ns.G.canaccessvalue(v)
-end
-
-local tocVersion = tonumber(select(4, GetBuildInfo()) or 0) or 0
-ns.IS_MIDNIGHT = tocVersion >= 120000
-ns.IS_12_0_7 = tocVersion >= 120007
 
 -----------------------------------------------------------------------
 -- Lightweight chat printer

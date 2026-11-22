@@ -4,6 +4,40 @@ All notable changes to **Sentinel** are documented here. This project follows
 [Semantic Versioning](https://semver.org/) and the spirit of
 [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Added
+
+- **Every texture ships with the addon.** The window border, buttons, close button,
+  search box, scrollbar and highlights are drawn from copies in `Media\Game`, so a
+  client patch that renames or drops game art can no longer blank the window.
+- **Culprit addon.** Each error names the addon most likely at fault, taken from the
+  message path, a taint notice, a blocked action or the first addon frame in the
+  stack. It leads the list row, the row tooltip, the detail pane and copied text.
+- **Session browser.** The Previous session tab steps through every older session
+  that has errors, skipping clean logins.
+- **Search reads the stack.** Searching for an addon name also finds errors that only
+  mention it in the trace.
+- **Clearer stack and locals.** Addon frames show their folder in gold while game and
+  engine frames are dimmed. Nested locals keep their indentation, and widgets, secret
+  values and engine temporaries each get their own colour.
+- **Retail TOC.** Interface 120105 is listed again next to the Forever and Classic
+  numbers.
+
+### Fixed
+
+- **Wrong trace when the client reports no error height.** The fallback pointed into
+  Sentinel's own capture code, so those errors stored Sentinel's stack and locals
+  instead of the failing addon's. The fault frame is now measured from the handler's
+  entry. Older captures affected by this hide the leftover frames and locals.
+- **Search typed ahead of itself.** Every keystroke queued its own full rebuild
+  because the debounce timer could never be cancelled.
+- **Memory that was never released.** Stack and locals are capped at 8000 bytes per
+  row, including rows saved before this version. The search cache empties when a
+  search ends or the window closes, and the export box drops its text when closed.
+- **Version tag contrast.** The version next to the title was nearly invisible on the
+  dark fill.
+
 ## [1.6.0] - 2026-10-25
 
 ### Fixed

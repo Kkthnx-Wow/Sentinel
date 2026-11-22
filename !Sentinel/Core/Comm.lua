@@ -16,6 +16,16 @@ local floor = math.floor
 local AceComm = LibStub and LibStub("AceComm-3.0", true)
 local AceSerializer = LibStub and LibStub("AceSerializer-3.0", true)
 
+-- Addon messages are refused inside instances on Midnight and during the client's chat
+-- messaging lockdown. Checked live, so the lockdown API is read at call time.
+local function sendBlocked()
+	local chatInfo = C_ChatInfo
+	if chatInfo and chatInfo.InChatMessagingLockdown and chatInfo.InChatMessagingLockdown() then
+		return true
+	end
+	return ns.G.IsInInstance() and true or false
+end
+
 -- If the libs failed to load, sharing is simply unavailable (Export still works).
 function Comm.IsAvailable()
 	return AceComm ~= nil and AceSerializer ~= nil
@@ -90,15 +100,29 @@ local function normalizePlayerName(player)
 end
 
 -----------------------------------------------------------------------
--- Build a serializable, Secret-free copy of an error.
--- Capture already refuses to store Secret messages, but we still strip any stack or
--- locals that might have been secret at grab time.
+-- Build a serializable copy of an error.
+-- Everything in the store is already plain text: Secret values are replaced with
+-- placeholders at capture, and SavedVariables cannot hold a secret. clip() drops any
+-- non-string leftovers from a corrupt row.
 -----------------------------------------------------------------------
 local function sanitize(err)
 	local copy = {}
-	copy.message = (ns.NotSecret(err.message) and clip(err.message, MAX_MSG_LEN)) or "<secret error>"
-	copy.stack = (err.stack and ns.NotSecret(err.stack)) and clip(err.stack, MAX_BLOCK_LEN) or nil
-	copy.locals = (err.locals and ns.NotSecret(err.locals)) and clip(err.locals, MAX_BLOCK_LEN) or nil
+	copy.message = clip(err.message, MAX_MSG_LEN) or "<unreadable error>"
+	copy.stack = clip(err.stack, MAX_BLOCK_LEN)
+	-- Trim a dangling debuglocals line here too, so a sent report never ends mid-entry.
+	local locals = err.locals
+	local trim = ns.Format.TrimLocalsTail
+	if trim then
+		local truncated
+		locals, truncated = trim(locals)
+		if truncated and locals then
+			local marker = L["(locals truncated)"]
+			if #locals + #marker + 1 <= MAX_BLOCK_LEN then
+				locals = locals .. "\n" .. marker
+			end
+		end
+	end
+	copy.locals = clip(locals, MAX_BLOCK_LEN)
 	copy.counter = err.counter
 	copy.time = err.time
 	return copy
@@ -204,7 +228,7 @@ function Comm.SendError(player, errorObject)
 		ns.Print(L["Nothing selected to send."])
 		return
 	end
-	if ns.G.IsInInstance() then
+	if sendBlocked() then
 		ns.Print(L["Cannot send while in an instance (Midnight blocks addon messages there). Use Export instead."])
 		return
 	end
@@ -222,7 +246,7 @@ function Comm.SendSession(player, sessionId)
 		ns.Print(L["Enter a valid player name."])
 		return
 	end
-	if ns.G.IsInInstance() then
+	if sendBlocked() then
 		ns.Print(L["Cannot send while in an instance (Midnight blocks addon messages there). Use Export instead."])
 		return
 	end
@@ -287,20 +311,23 @@ local function acceptEntry(e, sender, session)
 		return false
 	end
 
-	local existing = findReceived(msg, sender)
-	if existing then
-		local counter = (existing.counter or 1) + 1
-		existing.counter = counter > MAX_COUNTER and MAX_COUNTER or counter
-		existing.time = time()
-		return true
-	end
-
+	-- Gate every message, including repeats, before the O(n) dedupe scan. Otherwise a
+	-- peer could resend one report forever and never spend the per-sender budget.
 	if not canStoreFromSender(sender) then
 		if not rateLimitWarned[sender] then
 			rateLimitWarned[sender] = true
 			ns.Print(L["Too many error reports from %s. Further reports ignored for now."]:format(sender))
 		end
 		return false
+	end
+
+	local existing = findReceived(msg, sender)
+	if existing then
+		local counter = (existing.counter or 1) + 1
+		existing.counter = counter > MAX_COUNTER and MAX_COUNTER or counter
+		existing.time = time()
+		noteStoredFromSender(sender)
+		return true
 	end
 
 	-- Rebuild from only the known fields so we never store attacker controlled
@@ -326,6 +353,11 @@ end
 
 local function onComm(prefix, message, _, sender)
 	if prefix ~= ns.PREFIX then
+		return
+	end
+	-- An anonymous, non-string, or secret sender cannot be attributed, deduped, or written
+	-- to SavedVariables safely, so drop the whole message before touching it.
+	if type(sender) ~= "string" or sender == "" then
 		return
 	end
 	-- Bound the work before deserializing so a huge blob can't burn memory or CPU.

@@ -43,6 +43,11 @@ function Config.Initialize()
 	if category then
 		return
 	end
+	-- Older Classic clients may not ship the modern Settings API. The addon still
+	-- works there, it just has no options panel.
+	if not Settings or not Settings.RegisterVerticalLayoutCategory then
+		return
+	end
 	category = Settings.RegisterVerticalLayoutCategory(ns.DISPLAY_NAME)
 	ns.Config.category = category
 
@@ -75,7 +80,7 @@ function Config.Initialize()
 				ns.UI.ConfirmWipe()
 			end
 		end, L["Permanently delete every stored error from every session."], true)
-		local layout = SettingsPanel:GetLayout(category)
+		local layout = SettingsPanel and SettingsPanel.GetLayout and SettingsPanel:GetLayout(category)
 		if layout then
 			layout:AddInitializer(initializer)
 		end
@@ -96,7 +101,7 @@ function Config.Initialize()
 			L["Cycle Blizzard taintLog level (0-4). Output is written to taint.log."],
 			false
 		)
-		local layout = SettingsPanel:GetLayout(category)
+		local layout = SettingsPanel and SettingsPanel.GetLayout and SettingsPanel:GetLayout(category)
 		if layout then
 			layout:AddInitializer(initializer)
 		end

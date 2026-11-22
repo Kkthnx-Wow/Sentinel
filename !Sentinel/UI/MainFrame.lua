@@ -14,6 +14,7 @@ local L = ns.L
 local Format = ns.Format
 local Comm = ns.Comm
 local TaintLog = ns.TaintLog
+local Widgets = ns.Widgets
 
 local floor = math.floor
 
@@ -48,6 +49,9 @@ local window, listScroll, listChild, detailScroll, detailChild, detailText, coun
 local rows = {}
 local tabButtons = {}
 local taintBtn
+-- Older/newer arrows and label for browsing past sessions on the Previous tab.
+local sessionNav
+local updateSessionNav
 
 -- Set true only while the combat auto-hide is calling window:Hide(), so the
 -- OnHide handler can tell that forced hide apart from a real user close.
@@ -55,7 +59,7 @@ local combatHiding = false
 
 -- Forward declarations. The export dialog (showExport, below) reuses these skinning
 -- helpers that are implemented further down, so they must exist as upvalues here.
-local applyMawBorder, makePane
+local applyMawBorder, makePane, createScrollFrame
 
 -- Current view state.
 local state = {
@@ -63,6 +67,8 @@ local state = {
 	list = {},
 	selected = nil,
 	searchText = "",
+	-- Session shown on the Previous tab. nil means the newest past session with errors.
+	viewSession = nil,
 }
 
 -- Button skin (tabs, action buttons, close). Keep Blizzard's native button
@@ -178,6 +184,30 @@ end
 -----------------------------------------------------------------------
 -- Build the list for the active tab
 -----------------------------------------------------------------------
+-- Lowercased message plus stack per error, so a search for an addon name also finds
+-- errors that only mention it in the trace. Weak keys let deleted errors go, and the
+-- stored source strings detect a refreshed stack without bloating SavedVariables.
+-- The cache only pays off between keystrokes of one search, and the errors it keys
+-- on live for the whole session, so it is emptied when a search ends or the window
+-- closes rather than holding a lowercased copy of every stack until reload.
+local searchCache = setmetatable({}, { __mode = "k" })
+
+local function clearSearchCache()
+	wipe(searchCache)
+end
+
+local function searchText(e)
+	local m, s = e.message, e.stack
+	local entry = searchCache[e]
+	if entry and entry.m == m and entry.s == s then
+		return entry.text
+	end
+	local text = (type(m) == "string" and m or "") .. "\n" .. (type(s) == "string" and s or "")
+	text = text:lower()
+	searchCache[e] = { m = m, s = s, text = text }
+	return text
+end
+
 local function buildList()
 	local tab = state.tab
 	if tab == "all" then
@@ -185,7 +215,7 @@ local function buildList()
 	elseif tab == "session" then
 		return DB.GetBySession(DB.GetSessionId(), listScratch)
 	elseif tab == "previous" then
-		return DB.GetBySession(DB.GetSessionId() - 1, listScratch)
+		return DB.GetBySession(state.viewSession or (DB.GetSessionId() - 1), listScratch)
 	elseif tab == "received" then
 		return DB.GetReceived(listScratch)
 	elseif tab == "search" then
@@ -194,8 +224,7 @@ local function buildList()
 		local all = DB.GetAll()
 		for i = 1, #all do
 			local e = all[i]
-			local m = e.message
-			if type(m) == "string" and ns.NotSecret(m) and m:lower():find(needle, 1, true) then
+			if searchText(e):find(needle, 1, true) then
 				listScratch[#listScratch + 1] = e
 			end
 		end
@@ -206,10 +235,12 @@ local function buildList()
 end
 
 local function scheduleSearchRefresh()
+	-- NewTimer, not After: After returns no handle, so there would be nothing to cancel
+	-- and every keystroke would queue its own full rebuild.
 	if searchDebounceTimer then
 		searchDebounceTimer:Cancel()
 	end
-	searchDebounceTimer = C_Timer.After(SEARCH_DEBOUNCE, function()
+	searchDebounceTimer = C_Timer.NewTimer(SEARCH_DEBOUNCE, function()
 		searchDebounceTimer = nil
 		UI.Refresh()
 	end)
@@ -225,13 +256,7 @@ local shownError, shownCounter
 local detailDirty = true
 
 local function scrollDetailToTop()
-	-- With ScrollFrameTemplate the thin scrollbar drives the position, so nudge its
-	-- value too (guarded, since the field/method only exist on the modern template)
-	-- and keep the direct SetVerticalScroll as a fallback for the actual content offset.
-	local bar = detailScroll.ScrollBar
-	if bar and bar.SetScrollPercentage then
-		bar:SetScrollPercentage(0)
-	end
+	-- The scrollbar follows OnVerticalScroll, so moving the frame is enough.
 	detailScroll:SetVerticalScroll(0)
 end
 
@@ -257,7 +282,8 @@ local function updateDetail()
 	detailText:SetText(text)
 	-- Resize the scroll child height so the scrollbar reflects the full formatted
 	-- body. Width is owned by the scroll frame's OnSizeChanged, so leave it alone.
-	detailChild:SetHeight(math.max(detailText:GetStringHeight() + 4, 1))
+	local contentHeight = math.max(detailText:GetStringHeight() + 4, 1)
+	detailChild:SetHeight(contentHeight)
 	if detailScroll and not sameError then
 		scrollDetailToTop()
 	end
@@ -308,8 +334,12 @@ local function onRowEnter(row)
 	end
 	GameTooltip:SetOwner(row, "ANCHOR_RIGHT")
 	GameTooltip:AddLine(ns.DISPLAY_NAME, 0, 0.749, 1)
-	GameTooltip:AddLine(Format.ShortMessage(err), 1, 1, 1, true)
+	GameTooltip:AddLine(Format.MessageLine(err), 1, 1, 1, true)
 	GameTooltip:AddLine(" ")
+	local culprit = Format.GetCulprit(err)
+	if culprit then
+		GameTooltip:AddDoubleLine(L["AddOn"], culprit, 0.8, 0.8, 0.8, ns.SYNTAX.addon:GetRGB())
+	end
 	GameTooltip:AddDoubleLine(L["Occurrences"], tostring(err.counter or 1), 0.8, 0.8, 0.8, 1, 1, 1)
 	if err.time then
 		GameTooltip:AddDoubleLine(L["Last seen"], date("%Y-%m-%d %H:%M:%S", err.time), 0.8, 0.8, 0.8, 1, 1, 1)
@@ -330,16 +360,15 @@ local function createRow(slot)
 
 	local hl = row:CreateTexture(nil, "HIGHLIGHT")
 	hl:SetAllPoints()
-	hl:SetAtlas("groupfinder-button-highlight")
+	Widgets.SetTexture(hl, "groupfinder-button-highlight")
 	hl:SetDesaturated(true)
 	hl:SetVertexColor(ns.SYNTAX.counter:GetRGB())
 	hl:SetBlendMode("ADD")
 
 	row.sel = row:CreateTexture(nil, "BACKGROUND")
 	row.sel:SetAllPoints()
-	row.sel:SetAtlas("groupfinder-highlightbar-green")
-	row.sel:SetDesaturation(1)
-	row.sel:SetBlendMode("ADD")
+	-- A solid tint keeps the selection readable next to the hover glow.
+	row.sel:SetColorTexture(0, 0.749, 1, 0.22)
 	row.sel:Hide()
 
 	row.text = row:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
@@ -445,6 +474,12 @@ function UI.RefreshRows()
 	layoutRows()
 	countText:SetText((ns.SYNTAX.counter.code .. "%d|r"):format(n))
 	if listEmpty then
+		-- An empty search result is not a clean UI, so do not claim it is.
+		if state.tab == "search" then
+			listEmpty:SetText(L["No errors match your search."])
+		else
+			listEmpty:SetText(L["No errors caught, your UI is clean."])
+		end
 		listEmpty:SetShown(n == 0)
 	end
 end
@@ -494,14 +529,40 @@ function UI.Refresh()
 
 	UI.RefreshRows()
 	updateDetail()
+	updateSessionNav()
 end
 
 -----------------------------------------------------------------------
 -- Tabs
 -----------------------------------------------------------------------
+-- Shows the arrows only on the Previous tab and greys out a direction with nothing left.
+function updateSessionNav()
+	if not sessionNav then
+		return
+	end
+	local onPrevious = state.tab == "previous"
+	sessionNav:SetShown(onPrevious)
+	if not onPrevious then
+		return
+	end
+	local viewing = state.viewSession or (DB.GetSessionId() - 1)
+	sessionNav.label:SetText(L["Session %d"]:format(viewing))
+	sessionNav.older:SetEnabled(DB.GetNeighborSession(viewing, -1) ~= nil)
+	sessionNav.newer:SetEnabled(DB.GetNeighborSession(viewing, 1) ~= nil)
+end
+
 local function selectTab(tab)
 	state.tab = tab
 	state.selected = nil
+	if tab ~= "search" then
+		clearSearchCache()
+	end
+	if tab == "previous" then
+		-- Start on the newest past session that actually has errors, so a few clean
+		-- logins in a row do not open the tab to an empty list.
+		local current = DB.GetSessionId()
+		state.viewSession = DB.GetNeighborSession(current, -1) or (current - 1)
+	end
 	if tab ~= "search" then
 		searchBox:SetText("")
 	end
@@ -539,12 +600,16 @@ local function buildExportText(list)
 	if kept < total then
 		ns.Print(L["Export limited to the newest %d of %d errors."]:format(kept, total))
 	end
-	return table.concat(exportParts, "\n\n" .. ("-"):rep(40) .. "\n\n", 1, kept)
+	local text = table.concat(exportParts, "\n\n" .. ("-"):rep(40) .. "\n\n", 1, kept)
+	-- The parts can total hundreds of kilobytes, so do not keep them alive until the
+	-- next export.
+	wipe(exportParts)
+	return text
 end
 
 local function showExport(text)
 	if not exportFrame then
-		exportFrame = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
+		exportFrame = CreateFrame("Frame", nil, UIParent)
 		exportFrame:SetSize(560, 380)
 		exportFrame:SetPoint("CENTER")
 		exportFrame:SetFrameStrata("FULLSCREEN_DIALOG")
@@ -563,10 +628,12 @@ local function showExport(text)
 
 		local hint = exportFrame:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
 		hint:SetPoint("BOTTOMLEFT", title, "BOTTOMRIGHT", 5, 0)
-		hint:SetTextColor(63 / 255, 63 / 255, 70 / 255)
+		-- This is the only instruction for copying the report, so keep it readable;
+		-- the decorative version tag on the main window can stay muted.
+		hint:SetTextColor(0.55, 0.55, 0.58)
 		hint:SetText(L["Select the text below, then press Ctrl-C to copy."])
 
-		local close = CreateFrame("Button", nil, exportFrame, "UIPanelCloseButton")
+		local close = Widgets.CreateCloseButton(exportFrame)
 		close:SetPoint("TOPRIGHT", -15, -15)
 		skinCloseButton(close)
 
@@ -575,7 +642,7 @@ local function showExport(text)
 		pane:SetPoint("TOPLEFT", 14, -42)
 		pane:SetPoint("BOTTOMRIGHT", -14, 14)
 
-		local scroll = CreateFrame("ScrollFrame", nil, pane, "ScrollFrameTemplate")
+		local scroll = createScrollFrame(pane)
 		scroll:SetPoint("TOPLEFT", 6, -12)
 		scroll:SetPoint("BOTTOMRIGHT", -26, 6)
 
@@ -588,6 +655,11 @@ local function showExport(text)
 		edit:SetScript("OnEscapePressed", edit.ClearFocus)
 		scroll:SetScrollChild(edit)
 		exportFrame.edit = edit
+		-- An export can be 200 KB of text. Drop it once the box closes instead of
+		-- keeping it alive until the next export.
+		exportFrame:SetScript("OnHide", function(self)
+			self.edit:SetText("")
+		end)
 	end
 	exportFrame.edit:SetText(text or "")
 	exportFrame:Show()
@@ -691,9 +763,7 @@ StaticPopupDialogs["SENTINEL_SEND_SESSION"] = {
 -- Build the window
 -----------------------------------------------------------------------
 local function makeActionButton(parent, text, width, onClick, tooltip)
-	local b = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
-	b:SetSize(width, 22)
-	b:SetText(text)
+	local b = Widgets.CreateButton(parent, text, width)
 	b:SetScript("OnClick", onClick)
 	skinButton(b)
 	if tooltip then
@@ -703,64 +773,18 @@ local function makeActionButton(parent, text, width, onClick, tooltip)
 	return b
 end
 
--- Wrap a frame in Blizzard's ornate Maw / runecarving tooltip border,
--- exactly the way SharedTooltip_SetBackdropStyle dresses the "jailerstower" style
--- (layoutType = "TooltipMawLayout"), but intentionally omit the topper overlay.
--- We keep our own dark #121212 center fill and only borrow the edge art, and fall
--- back to the classic dialog border if the layout ever goes away.
-function applyMawBorder(frame)
-	local layout = NineSliceUtil and NineSliceUtil.GetLayout and NineSliceUtil.GetLayout("TooltipMawLayout")
-	if layout then
-		local nine = CreateFrame("Frame", nil, frame, "NineSlicePanelTemplate")
-		nine:SetAllPoints(frame)
-		if pcall(NineSliceUtil.ApplyLayout, nine, layout) then
-			frame.NineSlice = nine
-			-- The NineSlice is a child frame, so by default it (and its dark Center)
-			-- render *above* the window's content. Drop it to the window's own frame
-			-- level so the border + fill sit behind the title/tabs/panes, which live
-			-- at level +1.
-			nine:SetFrameLevel(frame:GetFrameLevel())
-			-- Paint the layout's own center region with our flat dark fill. The
-			-- NineSlice anchors Center *inside* the border art, so the background
-			-- can never bleed past the edge (a full-rect backdrop fill did).
-			if nine.Center then
-				nine.Center:SetColorTexture(unpack(ns.THEME.window))
-				nine.Center:SetAlpha(1)
-			else
-				-- No center piece, so inset the backdrop fill to keep it inside the edge.
-				frame:SetBackdrop({
-					bgFile = "Interface\\Buttons\\WHITE8X8",
-					insets = { left = 6, right = 6, top = 6, bottom = 6 },
-				})
-				frame:SetBackdropColor(unpack(ns.THEME.window))
-			end
-			return
-		end
-	end
-
-	-- Fallback, the classic gold dialog border.
-	frame:SetBackdrop({
-		bgFile = "Interface\\Buttons\\WHITE8X8",
-		edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-		edgeSize = 16,
-		insets = { left = 4, right = 4, top = 4, bottom = 4 },
-	})
-	frame:SetBackdropColor(unpack(ns.THEME.window))
-	frame:SetBackdropBorderColor(unpack(ns.THEME.paneBorder))
+-- Window chrome comes from Widgets.lua, which draws only bundled textures.
+function createScrollFrame(parent)
+	return Widgets.CreateScrollFrame(parent)
 end
 
--- A flat, charcoal panel with a hairline border (modern dark-mode look).
+function applyMawBorder(frame)
+	local c = ns.THEME.window
+	Widgets.ApplyMawBorder(frame, c[1], c[2], c[3], c[4])
+end
+
 function makePane(parent)
-	local p = CreateFrame("Frame", nil, parent, "BackdropTemplate")
-	p:SetBackdrop({
-		bgFile = "Interface\\Buttons\\WHITE8X8",
-		edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-		edgeSize = 16,
-		insets = { left = 4, right = 4, top = 4, bottom = 4 },
-	})
-	p:SetBackdropColor(unpack(ns.THEME.pane))
-	p:SetBackdropBorderColor(unpack(ns.THEME.paneBorder))
-	return p
+	return Widgets.CreatePane(parent, ns.THEME.pane, ns.THEME.paneBorder)
 end
 
 local function updateTaintLogButton()
@@ -775,9 +799,7 @@ local function onTabClick(b)
 end
 
 local function makeTab(parent, text, tab, tooltip)
-	local b = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
-	b:SetSize(120, 22)
-	b:SetText(text)
+	local b = Widgets.CreateButton(parent, text, 120)
 	b.tab = tab
 	b:SetScript("OnClick", onTabClick)
 	skinButton(b)
@@ -790,7 +812,7 @@ local function makeTab(parent, text, tab, tooltip)
 	-- additive blend and the theme cyan tint so it sits over the grey button art
 	-- without hiding the bevel or label.
 	local glow = b:CreateTexture(nil, "OVERLAY")
-	glow:SetAtlas("auctionhouse-nav-button-secondary-select", false)
+	Widgets.SetTexture(glow, "auctionhouse-nav-button-secondary-select")
 	glow:SetDesaturated(true)
 	glow:SetVertexColor(BUTTON_REST_R, BUTTON_REST_G, BUTTON_REST_B)
 	glow:SetBlendMode("ADD")
@@ -804,7 +826,7 @@ local function makeTab(parent, text, tab, tooltip)
 end
 
 local function Build()
-	window = CreateFrame("Frame", "SentinelFrame", UIParent, "BackdropTemplate")
+	window = CreateFrame("Frame", "SentinelFrame", UIParent)
 	window:SetSize(900, 500)
 	window:SetPoint("CENTER")
 	window:SetFrameStrata("DIALOG")
@@ -823,16 +845,25 @@ local function Build()
 	title:SetText(ns.COLORS.chat .. ns.DISPLAY_NAME .. "|r")
 
 	-- Version tag, two font sizes smaller than the title (Large -> Normal -> Small),
-	-- Muted Charcoal (#3F3F46), baseline-aligned just to the right of the name.
+	-- muted gray, baseline-aligned just to the right of the name. The old charcoal
+	-- (#3F3F46) was under 2:1 against the #121212 fill and read as blank.
 	local version = window:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
 	version:SetPoint("BOTTOMLEFT", title, "BOTTOMRIGHT", 5, 0)
-	version:SetTextColor(63 / 255, 63 / 255, 70 / 255)
+	version:SetTextColor(0.55, 0.55, 0.58)
 	version:SetText("v" .. ns.VERSION)
 
-	countText = window:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
-	countText:SetPoint("LEFT", version, "RIGHT", 8, 2)
+	-- A muted vertical rule separates the count from the version, so "v1.6.0 3"
+	-- no longer reads as one four-part version string. A texture is used instead of a
+	-- glyph so it renders regardless of the client font.
+	local countDivider = window:CreateTexture(nil, "ARTWORK")
+	countDivider:SetColorTexture(63 / 255, 63 / 255, 70 / 255, 1)
+	countDivider:SetSize(1, 12)
+	countDivider:SetPoint("LEFT", version, "RIGHT", 8, 0)
 
-	local close = CreateFrame("Button", nil, window, "UIPanelCloseButton")
+	countText = window:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
+	countText:SetPoint("LEFT", countDivider, "RIGHT", 8, 2)
+
+	local close = Widgets.CreateCloseButton(window)
 	close:SetPoint("TOPRIGHT", -15, -15)
 	skinCloseButton(close)
 
@@ -841,18 +872,43 @@ local function Build()
 	tabAll:SetPoint("TOPLEFT", 14, -42)
 	local tabSession = makeTab(window, L["This session"], "session", L["Errors caught since your last login or UI reload."])
 	tabSession:SetPoint("LEFT", tabAll, "RIGHT", 4, 0)
-	local tabPrev = makeTab(window, L["Previous session"], "previous", L["Errors caught during your previous play session."])
+	local tabPrev = makeTab(window, L["Previous session"], "previous", L["Errors caught during your previous play session."] .. "\n\n" .. L["The arrows next to the tabs step through older sessions."])
 	tabPrev:SetPoint("LEFT", tabSession, "RIGHT", 4, 0)
 	local tabRecv = makeTab(window, L["Received"], "received", L["Error reports other players have sent to you with Sentinel."])
 	tabRecv:SetPoint("LEFT", tabPrev, "RIGHT", 4, 0)
 
+	-- Session browser, shown only on the Previous tab.
+	sessionNav = CreateFrame("Frame", nil, window)
+	sessionNav:SetSize(150, 22)
+	sessionNav:SetPoint("LEFT", tabRecv, "RIGHT", 8, 0)
+	local function stepSession(step)
+		local viewing = state.viewSession or (DB.GetSessionId() - 1)
+		local target = DB.GetNeighborSession(viewing, step)
+		if target then
+			state.viewSession = target
+			state.selected = nil
+			resetListScroll()
+			UI.Refresh()
+		end
+	end
+	sessionNav.older = makeActionButton(sessionNav, "<", 24, function()
+		stepSession(-1)
+	end, L["Show an older session."])
+	sessionNav.older:SetPoint("LEFT")
+	sessionNav.newer = makeActionButton(sessionNav, ">", 24, function()
+		stepSession(1)
+	end, L["Show a newer session."])
+	sessionNav.newer:SetPoint("RIGHT")
+	sessionNav.label = sessionNav:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+	sessionNav.label:SetPoint("LEFT", sessionNav.older, "RIGHT", 4, 0)
+	sessionNav.label:SetPoint("RIGHT", sessionNav.newer, "LEFT", -4, 0)
+	sessionNav:Hide()
+
 	-- Search box
-	searchBox = CreateFrame("EditBox", nil, window, "SearchBoxTemplate")
-	searchBox:SetSize(200, 22)
-	searchBox:SetPoint("TOPRIGHT", -16, -42)
-	searchBox:SetAutoFocus(false)
-	searchBox:SetScript("OnTextChanged", function(self)
-		SearchBoxTemplate_OnTextChanged(self)
+	searchBox = Widgets.CreateSearchBox(window, 200, SEARCH)
+	searchBox:SetPoint("TOPRIGHT", -16, -43)
+	-- Hook so the box keeps its own placeholder and clear-button handling.
+	searchBox:HookScript("OnTextChanged", function(self)
 		local text = self:GetText()
 		if text and text ~= "" and not text:find("^%s*$") then
 			state.searchText = text
@@ -881,21 +937,18 @@ local function Build()
 	listInset:SetPoint("TOPLEFT", 14, -78)
 	listInset:SetSize(288, 376)
 
-	-- ScrollFrameTemplate (10.1+) is the modern replacement for the chunky
-	-- UIPanelScrollFrameTemplate, and it auto-creates a thin MinimalScrollBar and
-	-- manages range + mouse wheel itself, so we no longer wire those by hand.
-	listScroll = CreateFrame("ScrollFrame", nil, listInset, "ScrollFrameTemplate")
+	-- The scroll frame brings its own thin bar, wheel handling and range tracking.
+	listScroll = createScrollFrame(listInset)
 	listScroll:SetPoint("TOPLEFT", 6, -12)
 	listScroll:SetPoint("BOTTOMRIGHT", -26, 6)
 	listChild = CreateFrame("Frame", nil, listScroll)
-	listChild:SetSize(262, 1)
+	-- listInset is 288 wide with a 6px left inset and a 26px scrollbar gutter.
+	listChild:SetSize(256, 1)
 	listScroll:SetScrollChild(listChild)
 	-- Only the rows in view exist, so every scroll or range change redraws that slice.
 	listScroll:HookScript("OnVerticalScroll", layoutRows)
 	listScroll:HookScript("OnScrollRangeChanged", layoutRows)
-	if listScroll.SetPanExtent then
-		listScroll:SetPanExtent(ROW_HEIGHT * 3)
-	end
+	listScroll.panExtent = ROW_HEIGHT * 3
 
 	listEmpty = listInset:CreateFontString(nil, "ARTWORK", "GameFontDisableLarge")
 	listEmpty:SetPoint("CENTER", 0, 20)
@@ -907,7 +960,7 @@ local function Build()
 	detailInset:SetPoint("TOPLEFT", listInset, "TOPRIGHT", 12, 0)
 	detailInset:SetPoint("BOTTOMRIGHT", window, "BOTTOMRIGHT", -14, 44)
 
-	detailScroll = CreateFrame("ScrollFrame", nil, detailInset, "ScrollFrameTemplate")
+	detailScroll = createScrollFrame(detailInset)
 	detailScroll:SetPoint("TOPLEFT", 6, -12)
 	detailScroll:SetPoint("BOTTOMRIGHT", -26, 6)
 
@@ -929,7 +982,8 @@ local function Build()
 	detailText:SetNonSpaceWrap(false)
 	detailText:SetTextColor(ns.SYNTAX.stackText:GetRGB())
 	detailScroll:SetScrollChild(detailChild)
-	detailScroll:SetScript("OnSizeChanged", function(_, width)
+	-- Hook, don't replace: the scroll frame uses OnSizeChanged to resize its bar.
+	detailScroll:HookScript("OnSizeChanged", function(_, width)
 		if width and width > 0 then
 			detailChild:SetWidth(width)
 			-- Reflow the wrapped height for the new width.
@@ -1018,6 +1072,10 @@ local function Build()
 				tab = "received"
 			elseif pending.session == DB.GetSessionId() then
 				tab = "session"
+			elseif type(pending.session) == "number" and pending.session < DB.GetSessionId() then
+				-- An older error opens on its own session page.
+				tab = "previous"
+				state.viewSession = pending.session
 			end
 			state.tab = tab
 			if tab ~= "search" then
@@ -1050,6 +1108,7 @@ local function Build()
 	-- which is exactly the "stuck to combat" behaviour we are fixing. The combat
 	-- auto-hide sets combatHiding first so its own Hide() stays exempt.
 	window:SetScript("OnHide", function()
+		clearSearchCache()
 		if combatHiding then
 			return
 		end

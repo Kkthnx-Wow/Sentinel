@@ -24,6 +24,42 @@ local DEFAULTS = {
 ns.DEFAULTS = DEFAULTS
 
 -----------------------------------------------------------------------
+-- Per-row size cap
+-----------------------------------------------------------------------
+-- Up to MAX_ERRORS rows live in memory and in SavedVariables, so one oversized stack
+-- or locals dump must not cost megabytes. The cap matches the sharing limit, so a
+-- stored row always fits in a report. Shared with Capture.lua, which loads after this.
+local MAX_BLOCK_BYTES = 8000
+
+-- Cuts at the last line break inside the cap, which never splits a UTF-8 character and
+-- keeps whole name=value lines. A single huge line falls back to a byte cut that backs
+-- off any partial trailing character.
+function ns.CapBlock(text)
+	if type(text) ~= "string" or #text <= MAX_BLOCK_BYTES then
+		return text
+	end
+	local cut = text:sub(1, MAX_BLOCK_BYTES)
+	local lastBreak = cut:match(".*()\n")
+	if lastBreak and lastBreak > 1 then
+		cut = cut:sub(1, lastBreak - 1)
+	else
+		local n = #cut
+		while n > 0 do
+			local b = cut:byte(n)
+			if b < 0x80 or b >= 0xC0 then
+				break
+			end
+			n = n - 1
+		end
+		if n > 0 and cut:byte(n) >= 0xC0 then
+			n = n - 1
+		end
+		cut = cut:sub(1, n)
+	end
+	return cut .. "\n..."
+end
+
+-----------------------------------------------------------------------
 -- Initialize SavedVariables + start a new session
 -----------------------------------------------------------------------
 local function migrate(sv)
@@ -41,9 +77,13 @@ do
 	if type(sv.errors) ~= "table" then
 		sv.errors = {}
 	end
-	if type(sv.session) ~= "number" then
-		sv.session = 0
+	-- SavedVariables can be hand-edited or half-written. NaN and infinities would
+	-- poison session comparisons for the rest of the install.
+	local session = tonumber(sv.session)
+	if not session or session ~= session or session == math.huge or session == -math.huge then
+		session = 0
 	end
+	sv.session = math.floor(session)
 	if type(sv.config) ~= "table" then
 		sv.config = {}
 	end
@@ -67,6 +107,32 @@ do
 				table.remove(errors, i)
 			end
 		end
+		-- Normalise the numeric fields as well. A string counter reaches %d in the row
+		-- formatter and date() in the tooltip, so one corrupt row would fault on every
+		-- refresh instead of just displaying odd data.
+		for i = 1, #errors do
+			local e = errors[i]
+			local counter = tonumber(e.counter)
+			if not counter or counter < 1 then
+				counter = 1
+			elseif counter > 99999 then
+				counter = 99999
+			end
+			e.counter = math.floor(counter)
+			local stamp = tonumber(e.time)
+			if stamp and (stamp ~= stamp or stamp == math.huge or stamp == -math.huge) then
+				stamp = nil
+			end
+			e.time = stamp
+			local rowSession = tonumber(e.session)
+			if not rowSession or rowSession ~= rowSession or rowSession == math.huge or rowSession == -math.huge then
+				rowSession = sv.session
+			end
+			e.session = math.floor(rowSession)
+			-- Rows saved before the cap existed are held to it as well.
+			e.stack = ns.CapBlock(e.stack)
+			e.locals = ns.CapBlock(e.locals)
+		end
 	end
 
 	-- Begin a fresh session for this login/reload.
@@ -80,23 +146,43 @@ do
 
 	-- Stable numeric ids for chat hyperlinks. Table-pointer identity dies across
 	-- /reload, so we backfill legacy rows once and keep a persistent counter.
-	local maxId = 0
+	-- Chat links carry the id, so keep it a positive integer. A hand-edited
+	-- fractional or infinite id would otherwise poison maxId/nextErrorId (and %d).
+	local seenIds = {}
 	for i = 1, #errors do
 		local e = errors[i]
-		if type(e) == "table" and type(e.id) == "number" and e.id > maxId then
-			maxId = e.id
+		local id = tonumber(e.id)
+		if id and id == id and id ~= math.huge and id ~= -math.huge then
+			id = math.floor(id)
+		else
+			id = nil
+		end
+		if id and (id < 1 or seenIds[id]) then
+			id = nil
+		end
+		e.id = id
+		if id then
+			seenIds[id] = true
+		end
+	end
+	local maxId = 0
+	for i = 1, #errors do
+		local id = errors[i].id
+		if id and id > maxId then
+			maxId = id
 		end
 	end
 	for i = 1, #errors do
 		local e = errors[i]
-		if type(e) == "table" and type(e.id) ~= "number" then
+		if not e.id then
 			maxId = maxId + 1
 			e.id = maxId
 		end
 	end
-	if type(sv.nextErrorId) ~= "number" or sv.nextErrorId <= maxId then
+	if type(sv.nextErrorId) ~= "number" or sv.nextErrorId ~= sv.nextErrorId or sv.nextErrorId == math.huge then
 		sv.nextErrorId = maxId + 1
 	end
+	sv.nextErrorId = math.max(math.floor(sv.nextErrorId), maxId + 1)
 
 	if type(SentinelCharDB) ~= "table" then
 		SentinelCharDB = {}
@@ -139,6 +225,29 @@ function DB.GetBySession(sessionId, out)
 		end
 	end
 	return out
+end
+
+-- Nearest session before (step -1) or after (step 1) `sessionId` that holds locally
+-- caught errors, never reaching the live session. nil when there is none, so session
+-- browsing skips empty logins instead of stopping on blank pages.
+function DB.GetNeighborSession(sessionId, step)
+	local current = ns.State.sessionId
+	local best
+	local errors = DB.errors
+	for i = 1, #errors do
+		local e = errors[i]
+		local s = e.session
+		if not e.source and s < current then
+			if step < 0 then
+				if s < sessionId and (not best or s > best) then
+					best = s
+				end
+			elseif s > sessionId and (not best or s < best) then
+				best = s
+			end
+		end
+	end
+	return best
 end
 
 -- Returns every error that arrived from another player.

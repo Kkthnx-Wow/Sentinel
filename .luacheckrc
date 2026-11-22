@@ -22,6 +22,11 @@ globals = {
 }
 
 read_globals = {
+	"C_ChatInfo",
+	"GetAddOnMetadata",
+	"ItemRefTooltip",
+	"SEARCH",
+	"SetItemRef",
 	"AddonCompartmentFrame",
 	"CANCEL",
 	"CLOSE",

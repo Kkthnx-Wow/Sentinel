@@ -27,11 +27,11 @@ local button
 local iconNormal = ns.ICON
 local iconAlert = ns.ICON_ALERT
 
--- The indicator textures ship with generous transparent padding, so crop them and
--- the orb reads clearly inside the tracking ring.
-local ICON_TEXCOORD = { 0.16, 0.84, 0.16, 0.84 }
+-- Bundled art (see tools/gen_media.py). One disc-and-ring texture replaces the old
+-- three minimap fileIDs, and a matching glow handles hover.
+local BUTTON_ART = ns.MEDIA .. "MinimapButton.tga"
+local BUTTON_GLOW = ns.MEDIA .. "MinimapButton-Highlight.tga"
 
-local isMainline = WOW_PROJECT_ID == WOW_PROJECT_MAINLINE
 local BUTTON_RADIUS = 5 -- extra pixels past the minimap edge
 
 local LDB = LibStub and LibStub("LibDataBroker-1.1", true)
@@ -123,7 +123,6 @@ local function updateCount()
 	if button then
 		button.count:SetText(countText)
 		button.icon:SetTexture(icon)
-		button.icon:SetTexCoord(ICON_TEXCOORD[1], ICON_TEXCOORD[2], ICON_TEXCOORD[3], ICON_TEXCOORD[4])
 	end
 	if dataObject then
 		dataObject.text = countText
@@ -158,7 +157,7 @@ local function onTooltip(self)
 	if DB.config.capturePaused then
 		GameTooltip:AddLine(" ")
 		GameTooltip:AddLine(L["Error capture is paused."], 1, 0.25, 0.25, true)
-	elseif ns.State.paused then
+	elseif ns.IsFloodPaused() then
 		GameTooltip:AddLine(" ")
 		GameTooltip:AddLine(L["Capture paused: too many errors per second (automatic)."], 1, 0.5, 0.25, true)
 	end
@@ -205,50 +204,43 @@ local function Build()
 	button:RegisterForClicks("LeftButtonUp", "RightButtonUp")
 	button:RegisterForDrag("LeftButton")
 	button:SetMovable(true)
-	button:SetHighlightTexture(136477) -- Interface\Minimap\UI-Minimap-ZoomButton-Highlight
-	button:GetHighlightTexture():SetBlendMode("ADD")
+	button:SetHighlightTexture(BUTTON_GLOW, "ADD")
 
-	local overlay = button:CreateTexture(nil, "OVERLAY")
-	overlay:SetTexture(136430) -- Interface\Minimap\MiniMap-TrackingBorder
-
-	local background = button:CreateTexture(nil, "BACKGROUND")
-	background:SetTexture(136467) -- Interface\Minimap\UI-Minimap-Background
+	local art = button:CreateTexture(nil, "BACKGROUND")
+	art:SetTexture(BUTTON_ART)
+	art:SetAllPoints(button)
 
 	button.icon = button:CreateTexture(nil, "ARTWORK")
-
-	if isMainline then
-		overlay:SetSize(50, 50)
-		overlay:SetPoint("TOPLEFT", button, "TOPLEFT")
-		background:SetSize(24, 24)
-		background:SetPoint("CENTER", button, "CENTER")
-		button.icon:SetSize(18, 18)
-		button.icon:SetPoint("CENTER", button, "CENTER")
-	else
-		overlay:SetSize(53, 53)
-		overlay:SetPoint("TOPLEFT", button, "TOPLEFT")
-		background:SetSize(20, 20)
-		background:SetPoint("TOPLEFT", button, "TOPLEFT", 7, -5)
-		button.icon:SetSize(17, 17)
-		button.icon:SetPoint("TOPLEFT", button, "TOPLEFT", 7, -6)
-	end
-
-	button.icon:SetTexCoord(ICON_TEXCOORD[1], ICON_TEXCOORD[2], ICON_TEXCOORD[3], ICON_TEXCOORD[4])
+	button.icon:SetSize(18, 18)
+	button.icon:SetPoint("CENTER", button, "CENTER")
 
 	button.count = button:CreateFontString(nil, "OVERLAY", "NumberFontNormalSmall")
 	button.count:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", -2, 2)
 	button.count:SetTextColor(1, 0.3, 0.3)
 
+	-- A drag release also fires OnClick on the same mouse-up, which would toggle the
+	-- window every time the button is repositioned. dragging suppresses that one click.
+	local dragging = false
 	button:SetScript("OnClick", function(_, btn)
+		if dragging then
+			return
+		end
 		handleClick(btn)
 	end)
 	button:SetScript("OnEnter", onTooltip)
 	button:SetScript("OnLeave", GameTooltip_Hide)
 	button:SetScript("OnDragStart", function(self)
+		dragging = true
 		self:SetScript("OnUpdate", onDragUpdate)
 		GameTooltip:Hide()
 	end)
 	button:SetScript("OnDragStop", function(self)
 		self:SetScript("OnUpdate", nil)
+		-- Clear next frame, after the release click has been evaluated, so a drag that
+		-- produces no click cannot swallow the next real one.
+		C_Timer.After(0, function()
+			dragging = false
+		end)
 	end)
 
 	updatePosition()
@@ -309,8 +301,11 @@ local function registerCompartment()
 			text = ns.DISPLAY_NAME,
 			icon = ns.ICON,
 			notCheckable = true,
-			func = function(_, _, _, _, mouseButton)
-				handleClick(mouseButton or "LeftButton")
+			-- RegisterAddon calls func(button, menuInputData, menu). The clicked mouse
+			-- button lives in menuInputData, not in a positional arg, so read it there
+			-- or every compartment click would be treated as a left click.
+			func = function(_, menuInputData)
+				handleClick(menuInputData and menuInputData.buttonName or "LeftButton")
 			end,
 			funcOnEnter = function(self)
 				onTooltip(self)

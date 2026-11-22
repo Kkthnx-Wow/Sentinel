@@ -79,14 +79,18 @@ EventRegistry:RegisterCallback("Sentinel.ErrorCaptured", onErrorCaptured, CB_OWN
 -----------------------------------------------------------------------
 -- Chat hyperlinks (LinkTypes.AddOn routed through the "SetItemRef" event)
 -----------------------------------------------------------------------
--- Links look like |Haddon:sentinel:<id>|h...|h and are local only. The AddOn link
--- handler just rebroadcasts SetItemRef, and we match on the id, not a fragile
--- tostring of a table.
-local LINK_OWNER = {}
-EventRegistry:RegisterCallback("SetItemRef", function(_, link)
-	local id = link and tonumber(link:match("^addon:sentinel:(%d+)$"))
+-- Links look like |Haddon:sentinel:<id>|h...|h and are local only. SetItemRef is a
+-- global function, not a game event, so a callback registration never sees it: the
+-- click is dispatched by Blizzard's SetItemRef() through LinkUtil. A secure post-hook
+-- is the supported interception point. Unknown links are routed to the ItemRef tooltip
+-- by Blizzard, so close that stray popup when the link is ours.
+local function onSetItemRef(link)
+	local id = type(link) == "string" and tonumber(link:match("^addon:sentinel:(%d+)$"))
 	if not id then
 		return
+	end
+	if ItemRefTooltip and ItemRefTooltip:IsShown() then
+		ItemRefTooltip:Hide()
 	end
 	local err = DB.GetById(id)
 	if err then
@@ -94,7 +98,10 @@ EventRegistry:RegisterCallback("SetItemRef", function(_, link)
 	else
 		ns.Print(L["That error is no longer stored."])
 	end
-end, LINK_OWNER)
+end
+if SetItemRef then
+	hooksecurefunc("SetItemRef", onSetItemRef)
+end
 
 -----------------------------------------------------------------------
 -- Slash commands
@@ -114,7 +121,7 @@ local function fireTestError()
 end
 
 local function printHelp()
-	ns.Print(L["Usage: /sen [help|status|config|clear|pause|resume|sound|chat|test|build]"])
+	ns.Print(L["Usage: /sen [help|status|config|clear|pause|resume|sound|chat|taintlog|test|build]"])
 	ns.Print(L["/sen or /sentinel - toggle the error window."])
 	ns.Print(L["/sen status - show current capture and alert settings."])
 	ns.Print(L["/sen config - open Sentinel settings."])
@@ -135,7 +142,7 @@ local function printStatus()
 	local captureState
 	if config.capturePaused then
 		captureState = off
-	elseif ns.State.paused then
+	elseif ns.IsFloodPaused() then
 		captureState = L["paused (flood protection)"]
 	else
 		captureState = on
@@ -210,7 +217,16 @@ ns.API.Close = UI.Close
 ns.API.Toggle = UI.Toggle
 ns.API.GetErrors = DB.GetAll
 ns.API.GetSessionId = DB.GetSessionId
-ns.API.Reset = DB.Reset
+ns.API.Reset = function()
+	DB.Reset()
+	-- An external wipe must not leave an open window or badge showing errors that are gone.
+	if UI.UpdateMinimapCount then
+		UI.UpdateMinimapCount()
+	end
+	if UI.IsShown() then
+		UI.Refresh()
+	end
+end
 ns.API.IsCapturePaused = function()
 	return DB.config.capturePaused
 end
@@ -221,7 +237,7 @@ ns.API.GetVersion = function()
 	return ns.VERSION
 end
 ns.API.IsFloodPaused = function()
-	return ns.State.paused
+	return ns.IsFloodPaused()
 end
 ns.API.GetTaintLogLevel = TaintLog.GetLevel
 ns.API.SetTaintLogLevel = TaintLog.SetLevel

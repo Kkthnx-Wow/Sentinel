@@ -1,4 +1,4 @@
-## Interface: 120105, 11508, 20505, 50504
+## Interface: 120105, 16001, 11508, 20505, 50504
 ## Title: |cff00bfffSentinel|r
 ## Notes: A modern, Secret-Value-safe Lua error watcher. Catches, dedupes, persists, and lets you share UI bugs. |n|n|cff5C8BCFDeveloper|cffffffff:|r |nJosh "|CFF7b8489Kkthnx|r" Russell|n|n|cff009cdePayPal|r|cffffffff:|r |n|cffffffffwww.paypal.me/KkthnxTV|r|n|n|cfff96854Patreon|r|cffffffff:|r |n|cffffffffwww.patreon.com/Kkthnx|r
 ## Author: Josh "|CFF7b8489Kkthnx|r" Russell
@@ -6,7 +6,7 @@
 ## SavedVariables: SentinelDB
 ## SavedVariablesPerCharacter: SentinelCharDB
 ## LoadSavedVariablesFirst: 1
-## IconTexture: Interface\COMMON\Indicator-Green
+## IconTexture: Interface\AddOns\!Sentinel\Media\Indicator-Green.tga
 ## X-Curse-Project-ID: 1569685
 
 ## Category-enUS: Kkthnx's AddOns
@@ -23,6 +23,7 @@
 
 # --- Core (load order matters: capture must hook the error handler as early as possible) ---
 Core\Namespace.lua
+Core\MediaData.lua
 Core\Locales.lua
 Core\LocaleOverrides.lua
 Core\Database.lua
@@ -37,6 +38,7 @@ Core\Comm.lua
 Core\TaintLog.lua
 
 # --- User interface ---
+UI\Widgets.lua
 UI\MainFrame.lua
 UI\MinimapButton.lua
 UI\Config.lua

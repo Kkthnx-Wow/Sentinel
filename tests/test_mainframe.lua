@@ -37,13 +37,11 @@ local function newWidget(kind, name, parent, template)
 		scripts = {},
 		hooks = {},
 		text = "",
-		height = (template == "ScrollFrameTemplate") and 358 or 0,
+		-- Scroll frames get a laid-out viewport, everything else starts at zero.
+		height = (kind == "ScrollFrame") and 358 or 0,
 		scroll = 0,
 		setTextCalls = 0,
 	}
-	if template == "ScrollFrameTemplate" then
-		w.ScrollBar = newWidget("Slider", nil, w)
-	end
 	setmetatable(w, {
 		__index = function(_, key)
 			local method = widgetMethods[key]
@@ -201,6 +199,8 @@ local function freshUI()
 		return false
 	end
 	T.load(ns, "Core/TaintLog.lua")
+	T.load(ns, "Core/MediaData.lua")
+	T.load(ns, "UI/Widgets.lua")
 	T.load(ns, "UI/MainFrame.lua")
 	return ns, env
 end
@@ -239,7 +239,7 @@ end
 local function findScroll(index)
 	local n = 0
 	for _, w in ipairs(created) do
-		if w.template == "ScrollFrameTemplate" then
+		if w.kind == "ScrollFrame" then
 			n = n + 1
 			if n == index then
 				return w
@@ -419,6 +419,95 @@ T.case("export keeps the newest errors in reading order and reports the cut", fu
 		end
 	end
 	eq(notice, true, "truncation notice")
+end)
+
+local function buttonWithText(text)
+	for _, w in ipairs(created) do
+		if w.kind == "Button" and w.text == text then
+			return w
+		end
+	end
+end
+
+local function visibleMessages()
+	local out = {}
+	for _, row in ipairs(visibleRows()) do
+		out[#out + 1] = row.errorObject.message
+	end
+	table.sort(out)
+	return table.concat(out, ",")
+end
+
+T.case("the previous tab opens on the newest past session and steps to older ones", function()
+	local ns = freshUI()
+	local sid = ns.DB.GetSessionId()
+	ns.DB.Store({ message = "old", session = sid - 5, counter = 1 })
+	ns.DB.Store({ message = "recent", session = sid - 2, counter = 1 })
+	ns.DB.Store({ message = "now", session = sid, counter = 1 })
+	ns.UI.Open()
+	local prev = buttonWithText("Previous session")
+	prev.scripts.OnClick(prev)
+	eq(visibleMessages(), "recent", "newest past session with errors, not the empty sid - 1")
+	local older = buttonWithText("<")
+	older.scripts.OnClick(older)
+	eq(visibleMessages(), "old", "stepped back one session")
+	older.scripts.OnClick(older)
+	eq(visibleMessages(), "old", "nothing older, stays put")
+	local newer = buttonWithText(">")
+	newer.scripts.OnClick(newer)
+	eq(visibleMessages(), "recent", "stepped forward again")
+	newer.scripts.OnClick(newer)
+	eq(visibleMessages(), "recent", "never steps into the live session")
+end)
+
+T.case("search matches an addon named only in the stack and debounces through one timer", function()
+	local ns = freshUI()
+	local sid = ns.DB.GetSessionId()
+	ns.DB.Store({ message = "attempt to index a nil value", stack = "[Interface/AddOns/SomeAddon/Core.lua]:12: in function", session = sid, counter = 1 })
+	ns.DB.Store({ message = "unrelated", stack = "[Interface/AddOns/Other/x.lua]:1:", session = sid, counter = 1 })
+	local timers, cancelled = 0, 0
+	_G.C_Timer.NewTimer = function(_, fn)
+		timers = timers + 1
+		local handle = { fn = fn }
+		function handle.Cancel()
+			cancelled = cancelled + 1
+		end
+		_G.C_Timer.lastTimer = handle
+		return handle
+	end
+	ns.UI.Open()
+	local box
+	for _, w in ipairs(created) do
+		if w.kind == "EditBox" then
+			box = w
+			break
+		end
+	end
+	box.text = "some"
+	fire(box, "OnTextChanged")
+	box.text = "someaddon"
+	fire(box, "OnTextChanged")
+	eq(timers, 2, "one timer per keystroke")
+	eq(cancelled, 1, "the earlier pending refresh is cancelled")
+	_G.C_Timer.lastTimer.fn()
+	eq(visibleMessages(), "attempt to index a nil value", "stack text is searched, case-insensitively")
+end)
+
+T.case("closing the export box releases its text", function()
+	local ns = freshUI()
+	storeErrors(ns, 3)
+	ns.UI.Open()
+	local exportBtn = buttonWithText("Export")
+	exportBtn.scripts.OnClick(exportBtn)
+	local box
+	for _, w in ipairs(created) do
+		if w.edit and w.scripts.OnHide then
+			box = w
+		end
+	end
+	assert(box and box.edit.text ~= "", "export filled")
+	box:Hide()
+	eq(box.edit.text, "", "text dropped on close")
 end)
 
 T.finish()

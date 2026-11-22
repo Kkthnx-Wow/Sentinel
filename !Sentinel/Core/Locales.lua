@@ -15,9 +15,17 @@ ns.L = L
 -- enUS (default)
 L["Sentinel"] = "Sentinel"
 L["No errors caught, your UI is clean."] = "No errors caught, your UI is clean."
+L["No errors match your search."] = "No errors match your search."
 L["All bugs"] = "All bugs"
 L["This session"] = "This session"
 L["Previous session"] = "Previous session"
+L["AddOn"] = "AddOn"
+L["blocked %s"] = "blocked %s"
+L["Not shown. An older Sentinel build read these from its own handler, not from the error."] = "Not shown. An older Sentinel build read these from its own handler, not from the error."
+L["Session %d"] = "Session %d"
+L["Show an older session."] = "Show an older session."
+L["Show a newer session."] = "Show a newer session."
+L["The arrows next to the tabs step through older sessions."] = "The arrows next to the tabs step through older sessions."
 L["Received"] = "Received"
 L["Copy"] = "Copy"
 L["Export"] = "Export"
@@ -66,6 +74,7 @@ L["Macro tried to call the protected function '%s'."] = "Macro tried to call the
 
 -- Sharing
 L["Select the text below, then press Ctrl-C to copy."] = "Select the text below, then press Ctrl-C to copy."
+L["(locals truncated)"] = "(locals truncated)"
 L["Export limited to the newest %d of %d errors."] = "Export limited to the newest %d of %d errors."
 L["Send the currently selected error to a player."] = "Send the currently selected error to a player."
 L["Sent error to %s."] = "Sent error to %s."

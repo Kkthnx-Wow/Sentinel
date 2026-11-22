@@ -37,18 +37,33 @@ end
 -- the reported trace starts at the real fault site and not inside our handler.
 -----------------------------------------------------------------------
 local resolveErrorStack
+-- Stack height when the client entered captureError. The faulting function is the
+-- frame that called the handler, so it sits exactly one level past captureError.
+local handlerHeight
+-- Last-resort level for clients without GetCallstackHeight: resolveErrorStack,
+-- captureStackLocals, storeError, pcall and captureError sit above the fault.
+local FIXED_FAULT_LEVEL = 6
+local GetCallstackHeight = GetCallstackHeight
 do
-	local GetCallstackHeight = GetCallstackHeight
 	local GetErrorCallstackHeight = GetErrorCallstackHeight
 	local debugstack = debugstack
 	function resolveErrorStack()
+		local height = GetCallstackHeight and GetCallstackHeight()
 		local errorCallStackHeight = GetErrorCallstackHeight and GetErrorCallstackHeight()
-		if errorCallStackHeight and GetCallstackHeight then
-			local errorStackOffset = errorCallStackHeight - 1
-			local debugStackLevel = GetCallstackHeight() - errorStackOffset
-			return debugstack(debugStackLevel), debugStackLevel
+		if errorCallStackHeight and height then
+			local debugStackLevel = height - (errorCallStackHeight - 1)
+			if debugStackLevel >= 1 then
+				return debugstack(debugStackLevel), debugStackLevel
+			end
 		end
-		return debugstack(3), 3
+		-- The client sometimes reports no error height. A fixed offset breaks whenever
+		-- the capture path changes shape (it once pointed into our own store step), so
+		-- measure from the handler's own entry height instead.
+		local level = FIXED_FAULT_LEVEL
+		if height and handlerHeight then
+			level = height - handlerHeight + 2
+		end
+		return debugstack(level), level
 	end
 end
 
@@ -69,6 +84,29 @@ local msgsAllowed = MAX_PER_SEC
 local msgsAllowedLastTime = GetTime()
 local lastWarningTime = 0
 
+-- How long the paused state keeps reporting after the last dropped error. The token
+-- bucket refills within a tenth of a second, so without a hold the status line and
+-- tooltip could never actually show it. It is refreshed on every dropped error, so it
+-- only expires once the storm has genuinely stopped.
+local FLOOD_PAUSE_HOLD = 5
+
+-- Flood protection is momentary, so the raw State.paused flag is not safe to read from
+-- status displays: it is only cleared by the next captured error, which may never come,
+-- leaving "paused (flood protection)" showing for the rest of the session. Everything
+-- that reports the pause asks this instead, and the flag clears itself once it expires.
+function ns.IsFloodPaused()
+	local untilTime = State.floodResumeAt
+	if untilTime and GetTime() < untilTime then
+		return true
+	end
+	if untilTime then
+		-- The hold has lapsed, so stop reporting a pause and let the warning gate reset.
+		State.floodResumeAt = nil
+		State.paused = false
+	end
+	return false
+end
+
 -- Re-entrancy guard. It is true only while we are in the middle of capturing one
 -- error. If a second error fires during that window our own capture code faulted,
 -- so we surface it and bail out to avoid an infinite handler loop. This is far more
@@ -80,8 +118,10 @@ local processing = false
 -- long-lived spammy error would otherwise grow it without bound.
 local MAX_COUNTER = 99999
 
--- Stack and locals can embed Secret Values (the formatted message is guarded with
--- canaccessvalue). Store placeholders instead of opaque values in SavedVariables.
+local capBlock = ns.CapBlock
+
+-- Stack and locals can embed Secret Values too. Store readable placeholders instead
+-- of opaque values in SavedVariables.
 local function captureStackLocals()
 	local stack, level = resolveErrorStack()
 	stack = stack or "debugstack returned nil."
@@ -92,7 +132,7 @@ local function captureStackLocals()
 	if issecretvalue(locals) then
 		locals = "<secret locals>"
 	end
-	return stack, locals
+	return capBlock(stack), capBlock(locals)
 end
 
 -- The actual store and dedupe work. Runs behind the re-entrancy guard and inside
@@ -150,6 +190,8 @@ local function storeError(errorMessage, isSimple, session)
 end
 
 local function captureError(errorMessage, isSimple)
+	-- Recorded first, while this is still the frame directly above the fault.
+	handlerHeight = GetCallstackHeight and GetCallstackHeight()
 	if DB.config.capturePaused then
 		return
 	end
@@ -160,6 +202,9 @@ local function captureError(errorMessage, isSimple)
 	msgsAllowed = msgsAllowed + (now - msgsAllowedLastTime) * MAX_PER_SEC
 	msgsAllowedLastTime = now
 	if msgsAllowed < 1 then
+		-- Refresh the reporting window on every dropped error, so the status line and
+		-- tooltip keep showing the pause for as long as the storm lasts.
+		State.floodResumeAt = now + FLOOD_PAUSE_HOLD
 		if not State.paused then
 			State.paused = true
 			if now > lastWarningTime + 10 then
@@ -175,15 +220,16 @@ local function captureError(errorMessage, isSimple)
 	end
 	msgsAllowed = msgsAllowed - 1
 
-	-- An error message can be a Secret Value (canaccessvalue on the formatted log
-	-- line). Guard it before we tostring or inspect it. If it is secret we print it
-	-- and bail without storing or deduping. Lua warnings never arrive as secret.
+	-- The message can be a Secret Value, and tainted code may not read or tostring it.
+	-- Replace it with a readable placeholder instead of bailing: the error is still
+	-- counted, listed and alerted, and the stack captured below can still name the
+	-- culprit addon. This is the addon's only Secret boundary; everything stored from
+	-- here on is a plain string.
 	if errorMessage ~= nil and issecretvalue(errorMessage) then
-		print(ns.COLORS.chat .. ns.DISPLAY_NAME .. ":|r", errorMessage)
-		return
+		errorMessage = "<secret error message>"
+	else
+		errorMessage = tostring(errorMessage)
 	end
-
-	errorMessage = tostring(errorMessage)
 
 	-- Re-entrancy guard (see note at declaration).
 	if processing then
@@ -214,7 +260,14 @@ local function captureError(errorMessage, isSimple)
 
 	-- Notify displays (window and minimap) without coupling to them. isNew lets the
 	-- alert handler in Core.lua sound and announce only for genuinely new errors.
-	EventRegistry:TriggerEvent("Sentinel.ErrorCaptured", errorObject, isNew)
+	--
+	-- pcall: a subscriber that throws would otherwise re-enter this handler, capture its
+	-- own fault, dispatch again, and loop. A failed dispatch becomes one visible chat
+	-- line instead of an unbreakable cycle inside the error handler.
+	local dispatched, dispatchError = pcall(EventRegistry.TriggerEvent, EventRegistry, "Sentinel.ErrorCaptured", errorObject, isNew)
+	if not dispatched then
+		print(ns.COLORS.chat .. ns.DISPLAY_NAME .. ":|r", dispatchError)
+	end
 end
 
 -----------------------------------------------------------------------
@@ -260,6 +313,13 @@ events.MACRO_ACTION_BLOCKED = events.MACRO_ACTION_FORBIDDEN
 -- The warning payload is a plain string with no secret tags, and the default
 -- ScriptErrorsFrame also treats LUA_WARNING as normal text.
 function events.LUA_WARNING(_, warningText)
+	-- Warnings are plain text today, but tostring on a secret value would throw from
+	-- inside the error handler. Guard it so a secret warning payload can never recurse
+	-- back through capture or wedge the handler.
+	if warningText ~= nil and issecretvalue(warningText) then
+		captureError("LUA_WARNING: <secret>", true)
+		return
+	end
 	captureError("LUA_WARNING: " .. tostring(warningText or ""), true)
 end
 
