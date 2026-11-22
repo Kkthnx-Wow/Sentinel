@@ -18,7 +18,7 @@ A modern Lua error display for World of Warcraft. It captures full stacks and lo
 
 ## Get it
 
-Install from [CurseForge](https://www.curseforge.com/wow/addons/sentinel), or download the latest release from the [Releases](https://github.com/Kkthnx-Wow/Sentinel/releases) page and extract the `!Sentinel` folder into `World of Warcraft/_retail_/Interface/AddOns`.
+Install from [CurseForge](https://www.curseforge.com/wow/addons/sentinel), or download the latest release from the [Releases](https://github.com/Kkthnx-Wow/Sentinel/releases) page and extract the `!Sentinel` folder into `World of Warcraft/_retail_/Interface/AddOns`, or `_forever_/Interface/AddOns` for WoW Forever. Retail and Forever are the supported clients.
 
 ## Quick start
 

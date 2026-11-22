@@ -1,0 +1,28 @@
+# The addon lives in the !Sentinel subfolder. package-as names the zip folder,
+# and move-folders lifts the subfolder's files into it, which is also how the
+# packager finds !Sentinel.toc for the game versions and the CurseForge id.
+# Indent with spaces only, the packager refuses a leading tab.
+package-as: !Sentinel
+
+move-folders:
+    !Sentinel/!Sentinel: !Sentinel
+
+# The libraries are bundled under !Sentinel/Libs, so there is no separate no-lib build.
+enable-nolib-creation: no
+
+# Repository furniture that has no business inside the addon folder.
+ignore:
+    - .github
+    - .gitignore
+    - .luacheckrc
+    - scripts
+    - tests
+    - README.md
+    - CHANGELOG.md
+    - LICENSE
+
+manual-changelog:
+    filename: CHANGELOG.md
+    markup-type: markdown
+
+license-output: LICENSE.txt
